@@ -21,20 +21,45 @@ window.CONFIG = (function () {
   const CATEGORIES = [
     {
       key: 'sword', name: '검', icon: '⚔️', cls: 'ep-sword',
-      desc: '공격력 강화', skillIcon: '⚔️',
-      skillName: '강철 베기', skillDesc: '광역 참격 + 큰 데미지',
+      desc: '공격력 강화', skillIcon: '⚔️', skillKey: '1',
+      skillName: '강철 베기', skillDesc: '전방 돌진 광역 참격 + 큰 데미지',
+      powerLabel: '데미지',          // what the skill's "위력" means for tooltips
     },
     {
       key: 'armor', name: '방어구', icon: '🛡️', cls: 'ep-armor',
-      desc: '방어력 / 체력 강화', skillIcon: '🛡️',
-      skillName: '불굴의 방벽', skillDesc: '잠시 데미지 무효화',
+      desc: '방어력 / 체력 강화', skillIcon: '🛡️', skillKey: '2',
+      skillName: '불굴의 방벽', skillDesc: '잠시 모든 피해 무효화',
+      powerLabel: '지속시간',
     },
     {
       key: 'stat', name: '능력치', icon: '✨', cls: 'ep-stat',
-      desc: '이동속도 / 재생', skillIcon: '✨',
-      skillName: '질풍 가속', skillDesc: '속도 폭증 + 체력 회복',
+      desc: '이동속도 / 재생', skillIcon: '✨', skillKey: '3',
+      skillName: '질풍 가속', skillDesc: '이동속도 폭증 + 체력 회복',
+      powerLabel: '지속·회복량',
     },
   ];
+
+  const SKILL_UNLOCK_LEVEL = 5;
+
+  /* Per-milestone skill upgrades (cumulative). The category's special skill
+     unlocks at 5강 and is reinforced at 7 / 9 / 10강. `power` scales the skill's
+     main effect (검=데미지, 방어구=방벽 지속, 능력치=가속 지속·회복), `cdMult`
+     scales its cooldown. Values are the TOTAL state at that level. */
+  const SKILL_MILESTONES = [
+    { lv: 5,  power: 1.00, cdMult: 1.00, title: '스킬 해금' },
+    { lv: 7,  power: 1.20, cdMult: 1.00, title: '위력 강화' },
+    { lv: 9,  power: 1.20, cdMult: 0.82, title: '쿨타임 단축' },
+    { lv: 10, power: 1.45, cdMult: 0.82, title: '극의' },
+  ];
+
+  /* Resolve the cumulative skill modifiers for a given category level. */
+  function skillMods(level) {
+    let power = 0, cdMult = 1; // power 0 == locked (below 5강)
+    for (const m of SKILL_MILESTONES) {
+      if (level >= m.lv) { power = m.power; cdMult = m.cdMult; }
+    }
+    return { unlocked: level >= SKILL_UNLOCK_LEVEL, power, cdMult };
+  }
 
   return {
     MAX_ATTEMPTS: 30,
@@ -43,6 +68,8 @@ window.CONFIG = (function () {
     MILESTONES: [5, 7, 9, 10],
     ENHANCE_TABLE,
     CATEGORIES,
+    SKILL_MILESTONES,
+    skillMods,
 
     /* battle */
     BASE_HP: 100,
@@ -62,7 +89,7 @@ window.CONFIG = (function () {
     REGEN_PER_STAT_LV: 0.12,   // hp/sec passive regen from stat level
 
     /* skills unlock at first milestone (5강) of their category */
-    SKILL_UNLOCK_LEVEL: 5,
-    SKILL_COOLDOWNS: [7000, 9000, 8000], // sword, armor, stat (ms)
+    SKILL_UNLOCK_LEVEL,
+    SKILL_COOLDOWNS: [7000, 9000, 8000], // sword, armor, stat (ms) — at 5강; reduced by cdMult at 9·10강
   };
 })();
