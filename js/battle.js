@@ -17,6 +17,15 @@ window.Battle = (function () {
   const W = 1920, H = 1080, GROUND_Y = 880;
   const GRAVITY = 0.92, JUMP_V = -20, FRICTION = 0.80, MAXFALL = 26;
 
+  /* one-way floating platforms (x = left edge, y = top surface, w = width).
+     Side ledges are reachable from the ground; the high center is reachable
+     only by hopping off a side ledge. */
+  const PLATFORMS = [
+    { x: 215,         y: GROUND_Y - 175, w: 300 }, // left ledge
+    { x: W - 515,     y: GROUND_Y - 175, w: 300 }, // right ledge
+    { x: W / 2 - 175, y: GROUND_Y - 330, w: 350 }, // high center
+  ];
+
   /* muted, painted palettes (no neon) */
   const PAL_P1 = { armor: '#54688f', armorL: '#90a9d2', armorD: '#313c57', cape: '#2c4a7a', capeD: '#1c3052', plume: '#7c9fd0', accent: '#7c9fd0' };
   const PAL_P2 = { armor: '#8f5a54', armorL: '#d29790', armorD: '#573332', cape: '#7a3030', capeD: '#521d1d', plume: '#cf7a72', accent: '#cf7a72' };
@@ -64,6 +73,7 @@ window.Battle = (function () {
       atk: null,
       shieldT: 0, hasteT: 0, regenAcc: 0,
       hurt: 0, dead: false,
+      onPlatform: false, dropTimer: 0,
       step: 0, bobPhase: Math.random() * Math.PI * 2,
       ai: null,
     };
@@ -234,11 +244,28 @@ window.Battle = (function () {
     f.x += f.vx;
     f.x = Math.max(70, Math.min(W - 70, f.x));
 
-    if (!f.onGround) {
-      f.vy = Math.min(MAXFALL, f.vy + GRAVITY);
-      f.y += f.vy;
-      if (f.y >= GROUND_Y) { f.y = GROUND_Y; f.vy = 0; f.onGround = true; }
+    // step down through a platform with S (player only)
+    if (f === me && f.onGround && f.onPlatform && keys['s']) {
+      f.onGround = false; f.onPlatform = false; f.dropTimer = 12; f.y += 2;
     }
+    if (f.dropTimer > 0) f.dropTimer--;
+
+    // gravity + collision (always integrate; support is re-evaluated each step)
+    const prevFeet = f.y;
+    f.vy = Math.min(MAXFALL, f.vy + GRAVITY);
+    f.y += f.vy;
+    f.onGround = false; f.onPlatform = false;
+
+    // one-way platforms: only catch while descending and not dropping through
+    if (f.vy >= 0 && f.dropTimer <= 0) {
+      for (const p of PLATFORMS) {
+        if (f.x > p.x && f.x < p.x + p.w && prevFeet <= p.y + 6 && f.y >= p.y) {
+          f.y = p.y; f.vy = 0; f.onGround = true; f.onPlatform = true; break;
+        }
+      }
+    }
+    // solid ground
+    if (f.y >= GROUND_Y) { f.y = GROUND_Y; f.vy = 0; f.onGround = true; f.onPlatform = false; }
 
     if (f.cd.basic > 0) f.cd.basic--;
     if (f.cd.strong > 0) f.cd.strong--;
@@ -288,6 +315,9 @@ window.Battle = (function () {
     const dist = Math.abs(dx);
     const dir = Math.sign(dx) || 1;
     f.ai.t += STEP;
+
+    // hop toward an elevated opponent (use the platforms to give chase)
+    if (target.y < f.y - 50 && dist < 360 && f.onGround && Math.random() < 0.06) jump(f);
 
     if (f.hp < f.maxHp * 0.35) {
       if (f.stats.skills[1] && f.skillCd[1] <= 0 && Math.random() < 0.02) useSkill(f, 1);
@@ -468,7 +498,7 @@ window.Battle = (function () {
   function render() {
     ctx.clearRect(0, 0, W, H);
     drawStage();
-    // draw the rear (right) knight first for a touch of depth
+    drawPlatforms();
     drawFighter(p1); drawFighter(p2);
     drawParticles();
   }
@@ -622,6 +652,32 @@ window.Battle = (function () {
     ctx.restore();
   }
 
+  /* ---------- floating platforms ---------- */
+  function drawChain(x, yBottom) {
+    ctx.strokeStyle = 'rgba(34,28,38,0.9)'; ctx.lineWidth = 4;
+    for (let y = 0; y < yBottom - 4; y += 16) { ctx.beginPath(); ctx.ellipse(x, y, 4, 7, 0, 0, 6.3); ctx.stroke(); }
+  }
+  function drawPlatforms() {
+    const th = 26;
+    for (const p of PLATFORMS) {
+      // suspension chains into the dark above
+      drawChain(p.x + 34, p.y);
+      drawChain(p.x + p.w - 34, p.y);
+      // stone slab
+      const g = ctx.createLinearGradient(0, p.y, 0, p.y + th);
+      g.addColorStop(0, '#47414f'); g.addColorStop(1, '#221d29');
+      ctx.fillStyle = g; ctx.strokeStyle = OUT; ctx.lineWidth = 3;
+      rr(p.x, p.y, p.w, th, 8); ctx.fill(); ctx.stroke();
+      // top-lit edge
+      ctx.fillStyle = '#564e60'; ctx.fillRect(p.x + 5, p.y + 2, p.w - 10, 4);
+      // block seams
+      ctx.strokeStyle = 'rgba(0,0,0,0.32)'; ctx.lineWidth = 2;
+      for (let x = p.x + p.w / 4; x < p.x + p.w - 2; x += p.w / 4) { ctx.beginPath(); ctx.moveTo(x, p.y + 5); ctx.lineTo(x, p.y + th); ctx.stroke(); }
+      // faint rune glow on the underside
+      ctx.fillStyle = 'rgba(201,162,39,0.16)'; ctx.fillRect(p.x + p.w / 2 - 18, p.y + th, 36, 3);
+    }
+  }
+
   /* ---------- knight ---------- */
   function rr(x, y, w, h, r) {
     ctx.beginPath();
@@ -636,10 +692,12 @@ window.Battle = (function () {
   function roundRect(x, y, w, h, r) { rr(x, y, w, h, r); }
 
   function drawFighter(f) {
-    // ground shadow (world space)
+    // shadow on whatever surface the knight stands on (world space)
     ctx.save();
+    const shY = (f.onGround ? f.y : GROUND_Y) + 8;
+    const shSc = f.onGround ? 1 : 0.7;
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.beginPath(); ctx.ellipse(f.x, GROUND_Y + 8, 48, 12, 0, 0, 6.3); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(f.x, shY, 48 * shSc, 12 * shSc, 0, 0, 6.3); ctx.fill();
     ctx.restore();
 
     const P = f.pal;
