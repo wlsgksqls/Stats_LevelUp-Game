@@ -15,15 +15,17 @@ window.Battle = (function () {
 
   /* world constants */
   const W = 1920, H = 1080, GROUND_Y = 880;
-  const GRAVITY = 0.92, JUMP_V = -20, FRICTION = 0.80, MAXFALL = 26;
+  const GRAVITY = 0.92, JUMP_V = -21, FRICTION = 0.80, MAXFALL = 26;
+  const COYOTE = 8;          // frames of post-edge jump grace (lenient edge jumps)
+  const PLAT_EDGE = 24;      // extra px of platform landing margin at each edge
 
   /* one-way floating platforms (x = left edge, y = top surface, w = width).
      Side ledges are reachable from the ground; the high center is reachable
      only by hopping off a side ledge. */
   const PLATFORMS = [
-    { x: 215,         y: GROUND_Y - 175, w: 300 }, // left ledge
-    { x: W - 515,     y: GROUND_Y - 175, w: 300 }, // right ledge
-    { x: W / 2 - 175, y: GROUND_Y - 330, w: 350 }, // high center
+    { x: 215,         y: GROUND_Y - 200, w: 300 }, // left ledge
+    { x: W - 515,     y: GROUND_Y - 200, w: 300 }, // right ledge
+    { x: W / 2 - 175, y: GROUND_Y - 380, w: 350 }, // high center
   ];
 
   /* muted, painted palettes (no neon) */
@@ -73,7 +75,8 @@ window.Battle = (function () {
       atk: null,
       shieldT: 0, hasteT: 0, regenAcc: 0,
       hurt: 0, dead: false,
-      onPlatform: false, dropTimer: 0,
+      onPlatform: false, dropTimer: 0, coyote: 0,
+      tx: null, ty: null,   // remote interpolation targets (P2P)
       step: 0, bobPhase: Math.random() * Math.PI * 2,
       ai: null,
     };
@@ -150,7 +153,7 @@ window.Battle = (function () {
   /* ---------- actions (blocked during countdown) ---------- */
   function jump(f) {
     if (!f || f.dead || !running || phase !== 'fighting') return;
-    if (f.onGround) { f.vy = JUMP_V; f.onGround = false; }
+    if (f.onGround || f.coyote > 0) { f.vy = JUMP_V; f.onGround = false; f.onPlatform = false; f.coyote = 0; }
   }
 
   function attack(f, kind) {
@@ -194,7 +197,8 @@ window.Battle = (function () {
   function handleNetData(msg) {
     if (!msg || !msg.t) return;
     if (msg.t === 's') {
-      opp.x = msg.x; opp.y = msg.y; opp.vx = msg.vx; opp.facing = msg.facing;
+      // authoritative target for smooth predicted interpolation (see physics)
+      opp.tx = msg.x; opp.ty = msg.y; opp.vx = msg.vx; opp.facing = msg.facing;
       opp.hp = msg.hp; opp.shieldT = msg.shield ? 1 : 0; opp.hasteT = msg.haste ? 1 : 0;
       opp.onGround = msg.g;
     } else if (msg.t === 'a') {
@@ -225,22 +229,38 @@ window.Battle = (function () {
 
   /* ---------- simulation ---------- */
   function physics(f) {
+    // remote fighter (P2P): smooth velocity-predicted interpolation, no local sim
+    if (netMode && f === opp) {
+      if (f.tx == null) { f.tx = f.x; f.ty = f.y; }
+      f.tx += f.vx;                       // predict forward with last known velocity
+      f.x += (f.tx - f.x) * 0.5;          // ease render toward predicted target
+      f.y += (f.ty - f.y) * 0.5;
+      f.x = Math.max(70, Math.min(W - 70, f.x));
+      if (f.atk) { f.atk.t++; if (f.atk.t > f.atk.dur) f.atk = null; }
+      if (f.hurt > 0) f.hurt--;
+      return;
+    }
+
     const other = (f === p1) ? p2 : p1;
     if (other) f.facing = other.x >= f.x ? 1 : -1;
 
-    let speed = f.stats.speed * (f.hasteT > 0 ? 1.7 : 1);
+    const speed = f.stats.speed * (f.hasteT > 0 ? 1.7 : 1);
+    let dir = 0;
     if (f === me && !f.dead) {
-      let dir = 0;
       if (keys['a']) dir -= 1;
       if (keys['d']) dir += 1;
-      f.vx += dir * speed * 0.5;
       if (keys['s'] && !f.onGround) f.vy += 2.2;
     } else if (f.ai && !f.dead) {
-      aiThink(f, speed);
+      dir = aiThink(f, speed);
     }
 
-    f.vx *= FRICTION;
-    if (Math.abs(f.vx) > speed * 1.6) f.vx = Math.sign(f.vx) * speed * 1.6;
+    // snappy horizontal: ease quickly toward target speed; friction only when idle
+    if (dir !== 0 && !f.dead) {
+      const target = dir * speed * 1.6;
+      f.vx += (target - f.vx) * (f.onGround ? 0.6 : 0.22);
+    } else {
+      f.vx *= f.onGround ? FRICTION : 0.92;
+    }
     f.x += f.vx;
     f.x = Math.max(70, Math.min(W - 70, f.x));
 
@@ -256,16 +276,19 @@ window.Battle = (function () {
     f.y += f.vy;
     f.onGround = false; f.onPlatform = false;
 
-    // one-way platforms: only catch while descending and not dropping through
+    // one-way platforms with forgiving edges (wider x margin + softer top tolerance)
     if (f.vy >= 0 && f.dropTimer <= 0) {
       for (const p of PLATFORMS) {
-        if (f.x > p.x && f.x < p.x + p.w && prevFeet <= p.y + 6 && f.y >= p.y) {
+        if (f.x > p.x - PLAT_EDGE && f.x < p.x + p.w + PLAT_EDGE && prevFeet <= p.y + 10 && f.y >= p.y) {
           f.y = p.y; f.vy = 0; f.onGround = true; f.onPlatform = true; break;
         }
       }
     }
     // solid ground
     if (f.y >= GROUND_Y) { f.y = GROUND_Y; f.vy = 0; f.onGround = true; f.onPlatform = false; }
+
+    // coyote time — still allow a jump shortly after leaving an edge
+    if (f.onGround) f.coyote = COYOTE; else if (f.coyote > 0) f.coyote--;
 
     if (f.cd.basic > 0) f.cd.basic--;
     if (f.cd.strong > 0) f.cd.strong--;
@@ -313,7 +336,7 @@ window.Battle = (function () {
     const target = me;
     const dx = target.x - f.x;
     const dist = Math.abs(dx);
-    const dir = Math.sign(dx) || 1;
+    const dir0 = Math.sign(dx) || 1;
     f.ai.t += STEP;
 
     // hop toward an elevated opponent (use the platforms to give chase)
@@ -324,8 +347,9 @@ window.Battle = (function () {
       if (f.stats.skills[2] && f.skillCd[2] <= 0 && Math.random() < 0.02) useSkill(f, 2);
     }
 
+    let dir = 0;
     if (dist > 150) {
-      f.vx += dir * speed * 0.42;
+      dir = dir0;
       if (target.y < GROUND_Y - 40 && f.onGround && Math.random() < 0.03) jump(f);
       if (Math.random() < 0.01 && f.onGround) jump(f);
     } else {
@@ -336,9 +360,10 @@ window.Battle = (function () {
         else if (r < 0.38) attack(f, 'strong');
         else attack(f, 'basic');
       }
-      if (Math.random() < 0.02) f.vx += dir * speed * 0.3;
+      if (Math.random() < 0.05) dir = (Math.random() < 0.5 ? dir0 : -dir0); // spacing dance
       if (Math.random() < 0.012 && f.onGround) jump(f);
     }
+    return dir;
   }
 
   /* ---------- particles ---------- */
@@ -417,14 +442,15 @@ window.Battle = (function () {
 
     if (netMode) {
       netAcc += ms;
-      if (netAcc >= 33) {
+      if (netAcc >= 22) {   // ~45Hz state sync for snappier remote motion
         netAcc = 0;
         Net.send({ t: 's', x: me.x, y: me.y, vx: me.vx, facing: me.facing, hp: me.hp, g: me.onGround, shield: me.shieldT > 0, haste: me.hasteT > 0 });
       }
     }
 
     if (netMode) {
-      if (me.hp <= 0 && !me.dead) { me.dead = true; Net.send({ t: 'dead' }); finish('lose'); }
+      if (me.hp <= 0 && !me.dead) { me.dead = true; Net.send({ t: 'dead' }); Net.send({ t: 'dead' }); finish('lose'); }
+      else if (opp.hp <= 0 && !ended) finish('win');  // backup if a 'dead' packet is lost
     } else {
       if (p1.hp <= 0 || p2.hp <= 0) {
         const meDead = me.hp <= 0, oppDead = opp.hp <= 0;
