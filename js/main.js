@@ -394,6 +394,20 @@
     };
     window.addEventListener('touchend', endTouch);
     window.addEventListener('touchcancel', endTouch);
+
+    // robust visibility gating (works even if an old styles.css is cached):
+    // the [hidden] attribute is honored by the browser without any CSS.
+    const mc = $('#mobile-controls'), rh = $('#rotate-hint');
+    function updateVis() {
+      const inBattle = UI.currentScreen() === 'battle';
+      mc.hidden = !inBattle;
+      const portrait = window.matchMedia('(orientation: portrait)').matches;
+      rh.hidden = !(inBattle && portrait);
+    }
+    document.addEventListener('ff:screen', updateVis);
+    window.addEventListener('resize', updateVis);
+    window.addEventListener('orientationchange', updateVis);
+    updateVis();
   }
 
   /* ---------------- WIRE UP ---------------- */

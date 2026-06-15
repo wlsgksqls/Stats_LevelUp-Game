@@ -20,6 +20,7 @@ window.UI = (function () {
     if (el) el.classList.add('active');
     current = name;
     document.body.setAttribute('data-screen', name);
+    document.dispatchEvent(new CustomEvent('ff:screen', { detail: name }));
   }
   function currentScreen() { return current; }
 
@@ -87,6 +88,12 @@ window.UI = (function () {
   function init() {
     fitStage();
     window.addEventListener('resize', fitStage);
+    window.addEventListener('orientationchange', () => setTimeout(fitStage, 120));
+    window.addEventListener('load', fitStage);
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', fitStage);
+    // re-fit after the mobile browser settles its viewport (URL bar, etc.)
+    setTimeout(fitStage, 200);
+    setTimeout(fitStage, 600);
   }
 
   return { $, $$, init, show, currentScreen, loading, popup, closePopup, popupIsOpen, toast, fitStage };
