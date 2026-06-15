@@ -47,6 +47,7 @@ html, body {
 }
 #stage {
   position:relative; width:1920px; height:1080px;
+  flex: 0 0 auto;                 /* never let flexbox shrink it before the scale transform */
   transform-origin:center center; overflow:hidden;
   background:
     radial-gradient(1200px 760px at 50% 0%, #241a2a 0%, transparent 60%),
@@ -422,27 +423,28 @@ body.touch .battle-hud-bottom { display: none; }   /* replaced by the mobile ove
 body.touch[data-screen="battle"] .mobile-controls { display: block; }
 
 .mjoy {
-  position: absolute; left: 26px; bottom: 26px; width: 150px; height: 150px; border-radius: 50%;
+  position: absolute; left: 24px; bottom: 30px; width: 158px; height: 158px; border-radius: 50%;
   background: radial-gradient(circle at 50% 50%, rgba(40,32,46,0.5), rgba(12,10,16,0.55));
   border: 2px solid rgba(201,162,39,0.55); pointer-events: auto; touch-action: none;
   box-shadow: inset 0 0 26px rgba(0,0,0,0.55);
 }
-.mjoy::before { content: '◄ ►'; position: absolute; left: 50%; top: 14px; transform: translateX(-50%); font-size: 13px; color: rgba(231,221,201,0.5); }
-.mjoy::after  { content: '▲ 점프'; position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); font-size: 13px; color: rgba(231,221,201,0.5); }
+.mjoy::before { content: '◄ ►'; position: absolute; left: 50%; top: 16px; transform: translateX(-50%); font-size: 13px; color: rgba(231,221,201,0.5); }
+.mjoy::after  { content: '▲ 점프'; position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); font-size: 13px; color: rgba(231,221,201,0.5); }
 .mjoy-knob {
-  position: absolute; left: 50%; top: 50%; width: 66px; height: 66px; margin: -33px 0 0 -33px; border-radius: 50%;
+  position: absolute; left: 50%; top: 50%; width: 70px; height: 70px; margin: -35px 0 0 -35px; border-radius: 50%;
   background: radial-gradient(circle at 40% 35%, #e3c45a, #8a6f1e); border: 2px solid #2a2010;
   box-shadow: 0 3px 10px rgba(0,0,0,0.55);
 }
 
-.mobile-right { position: absolute; right: 24px; bottom: 24px; display: flex; flex-direction: column; align-items: flex-end; gap: 14px; pointer-events: none; }
+/* right-hand cluster: [1][2][3] [강공] in one thumb-reachable row */
+.mobile-right { position: absolute; right: 22px; bottom: 34px; display: flex; flex-direction: row; align-items: center; gap: 16px; pointer-events: none; }
 .mobile-skills { display: flex; gap: 12px; pointer-events: auto; }
-.mobile-skills .skill-slot { width: 58px; height: 58px; font-size: 26px; border-radius: 12px; }
+.mobile-skills .skill-slot { width: 62px; height: 62px; font-size: 28px; border-radius: 12px; }
 .mobile-skills .skill-slot .skill-key { font-size: 13px; top: 2px; left: 5px; }
-.mobile-skills .skill-slot .skill-lock { font-size: 22px; }
+.mobile-skills .skill-slot .skill-lock { font-size: 24px; }
 
 .mstrong {
-  pointer-events: auto; width: 108px; height: 108px; border-radius: 50%;
+  pointer-events: auto; width: 112px; height: 112px; border-radius: 50%;
   border: 3px solid #7a2f22; border-top-color: var(--ember);
   background: radial-gradient(circle at 40% 32%, #d4683f, #6e2218);
   color: #fff; font-weight: 900; font-size: 30px; font-family: var(--font-display); letter-spacing: 1px;

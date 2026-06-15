@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FORGE &amp; FIGHT — 강화 1vs1 액션</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ctext y='52' font-size='52'%3E%E2%9A%94%EF%B8%8F%3C/text%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="stylesheet" href="css/styles.css?v=1.4.1" />
 </head>
 <body>
   <!-- 16:9 stage scaled to fit the viewport -->
@@ -200,7 +200,7 @@
   </div>
 
   <!-- mobile touch controls (viewport-fixed; shown only on touch devices during battle) -->
-  <div id="mobile-controls" class="mobile-controls">
+  <div id="mobile-controls" class="mobile-controls" hidden>
     <div id="mjoy" class="mjoy"><div id="mjoy-knob" class="mjoy-knob"></div></div>
     <div class="mobile-right">
       <div class="mobile-skills">
@@ -213,19 +213,19 @@
   </div>
 
   <!-- portrait nudge (mobile, during battle only) -->
-  <div id="rotate-hint"><div class="rotate-emoji">🔄</div><div>가로 모드로 플레이하세요</div></div>
+  <div id="rotate-hint" hidden><div class="rotate-emoji">🔄</div><div>가로 모드로 플레이하세요</div></div>
 
   <!-- PeerJS for real P2P (vendored locally so it works without a CDN;
        game degrades to AI practice if it ever fails to load) -->
   <script src="vendor/peerjs.min.js"></script>
 
-  <!-- game source (classic scripts, loaded in dependency order) -->
-  <script src="js/config.js"></script>
-  <script src="js/state.js"></script>
-  <script src="js/ui.js"></script>
-  <script src="js/net.js"></script>
-  <script src="js/enhance.js"></script>
-  <script src="js/battle.js"></script>
-  <script src="js/main.js"></script>
+  <!-- game source (classic scripts, loaded in dependency order; ?v cache-busts on each release) -->
+  <script src="js/config.js?v=1.4.1"></script>
+  <script src="js/state.js?v=1.4.1"></script>
+  <script src="js/ui.js?v=1.4.1"></script>
+  <script src="js/net.js?v=1.4.1"></script>
+  <script src="js/enhance.js?v=1.4.1"></script>
+  <script src="js/battle.js?v=1.4.1"></script>
+  <script src="js/main.js?v=1.4.1"></script>
 </body>
 </html>
