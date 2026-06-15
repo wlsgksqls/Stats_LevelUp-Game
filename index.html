@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FORGE &amp; FIGHT — 강화 1vs1 액션</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ctext y='52' font-size='52'%3E%E2%9A%94%EF%B8%8F%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <!-- 16:9 stage scaled to fit the viewport -->
+  <div id="stage-wrap">
+    <div id="stage">
+
+      <!-- ============ SCREEN 1: LOBBY ============ -->
+      <section id="screen-lobby" class="screen active">
+        <div class="bg-grid"></div>
+        <div class="lobby-inner">
+          <div class="title-logo">
+            <span class="logo-forge">FORGE</span>
+            <span class="logo-amp">&amp;</span>
+            <span class="logo-fight">FIGHT</span>
+            <div class="logo-sub">30회 한정 강화 · 1vs1 P2P 액션</div>
+          </div>
+
+          <div class="lobby-panel">
+            <label class="field-label" for="nickname">닉네임</label>
+            <input id="nickname" class="text-input" type="text" maxlength="12"
+                   placeholder="빈칸이면 랜덤 이름이 부여됩니다" autocomplete="off" />
+            <div class="lobby-buttons">
+              <button id="btn-create-room" class="btn btn-primary">방 생성</button>
+              <button id="btn-join-room" class="btn btn-secondary">방 참여</button>
+            </div>
+            <button id="btn-practice" class="btn btn-ghost">혼자 연습 (vs AI)</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ SCREEN 2: WAITING ROOM ============ -->
+      <section id="screen-room" class="screen">
+        <div class="bg-grid"></div>
+        <div class="room-inner">
+          <h2 class="screen-heading">대기실</h2>
+
+          <div class="room-code-box">
+            <span class="room-code-label">방 코드</span>
+            <span id="room-code" class="room-code-value">------</span>
+            <button id="btn-copy-code" class="btn btn-mini" title="코드 복사">복사</button>
+          </div>
+
+          <div class="room-columns">
+            <div class="players-list-box">
+              <h3>참여자 목록</h3>
+              <ul id="players-list" class="players-list"></ul>
+            </div>
+
+            <div id="join-box" class="join-box hidden">
+              <h3>코드 입력</h3>
+              <input id="join-code-input" class="text-input" type="text" maxlength="6"
+                     placeholder="방 코드 6자리" autocomplete="off" />
+              <button id="btn-join-confirm" class="btn btn-primary">참여</button>
+              <div id="join-status" class="join-status"></div>
+            </div>
+          </div>
+
+          <div class="room-footer">
+            <button id="btn-room-back" class="btn btn-ghost">← 나가기</button>
+            <button id="btn-start-game" class="btn btn-primary btn-big" disabled>게임 시작</button>
+          </div>
+          <div id="room-hint" class="room-hint"></div>
+        </div>
+      </section>
+
+      <!-- ============ SCREEN 3: ENHANCEMENT ============ -->
+      <section id="screen-enhance" class="screen">
+        <div class="bg-grid"></div>
+        <div class="enhance-inner">
+          <div class="enhance-top">
+            <h2 class="screen-heading">강화 단계</h2>
+            <div class="attempts-counter">
+              <span class="attempts-label">남은 강화 횟수</span>
+              <span id="attempts-left" class="attempts-value">30</span>
+              <span class="attempts-max">/ 30</span>
+            </div>
+          </div>
+
+          <div id="enhance-grid" class="enhance-grid">
+            <!-- 3 category panels injected by JS -->
+          </div>
+
+          <div class="enhance-footer">
+            <div id="enhance-ready-status" class="ready-status"></div>
+            <button id="btn-enhance-done" class="btn btn-primary btn-big">전투 준비 완료</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ SCREEN 4: BATTLE ============ -->
+      <section id="screen-battle" class="screen">
+        <div class="battle-hud-top">
+          <div class="hp-wrap hp-left">
+            <div class="player-name" id="hud-name-p1">P1</div>
+            <div class="hp-bar"><div id="hp-fill-p1" class="hp-fill"></div></div>
+            <div class="hp-text"><span id="hp-num-p1">100</span> HP</div>
+          </div>
+
+          <div class="timer-wrap">
+            <div id="battle-timer" class="battle-timer">1:40</div>
+            <div id="overtime-badge" class="overtime-badge hidden">연장전</div>
+          </div>
+
+          <div class="hp-wrap hp-right">
+            <div class="player-name" id="hud-name-p2">P2</div>
+            <div class="hp-bar"><div id="hp-fill-p2" class="hp-fill"></div></div>
+            <div class="hp-text"><span id="hp-num-p2">100</span> HP</div>
+          </div>
+        </div>
+
+        <canvas id="battle-canvas" width="1920" height="1080"></canvas>
+
+        <div class="battle-hud-bottom">
+          <div class="hud-group">
+            <div class="hud-keys">
+              <span class="key">W</span>
+              <div class="key-row"><span class="key">A</span><span class="key">S</span><span class="key">D</span></div>
+            </div>
+            <span class="hud-caption">이동</span>
+          </div>
+          <div class="hud-group">
+            <span class="key key-wide">SPACE</span>
+            <span class="hud-caption">점프</span>
+          </div>
+          <div class="hud-group">
+            <span class="key key-mouse">L</span>
+            <span class="hud-caption">기본 공격</span>
+          </div>
+          <div class="hud-group">
+            <span class="key key-mouse key-strong">R</span>
+            <span class="hud-caption">강공격</span>
+          </div>
+          <div class="hud-skills">
+            <div class="skill-slot" id="skill-1" data-skill="0">
+              <span class="skill-key">1</span>
+              <span class="skill-icon">⚔️</span>
+              <span class="skill-lock">🔒</span>
+              <div class="skill-cd-overlay"></div>
+            </div>
+            <div class="skill-slot" id="skill-2" data-skill="1">
+              <span class="skill-key">2</span>
+              <span class="skill-icon">🛡️</span>
+              <span class="skill-lock">🔒</span>
+              <div class="skill-cd-overlay"></div>
+            </div>
+            <div class="skill-slot" id="skill-3" data-skill="2">
+              <span class="skill-key">3</span>
+              <span class="skill-icon">✨</span>
+              <span class="skill-lock">🔒</span>
+              <div class="skill-cd-overlay"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ SCREEN 5: RESULT ============ -->
+      <section id="screen-result" class="screen">
+        <div class="bg-grid"></div>
+      </section>
+
+      <!-- ============ OVERLAYS ============ -->
+      <!-- generic centered popup -->
+      <div id="popup-overlay" class="overlay hidden">
+        <div id="popup-card" class="popup-card">
+          <div id="popup-title" class="popup-title"></div>
+          <div id="popup-body" class="popup-body"></div>
+          <div id="popup-actions" class="popup-actions"></div>
+        </div>
+      </div>
+
+      <!-- loading transition -->
+      <div id="loading-overlay" class="overlay loading-overlay hidden">
+        <div class="loading-core">
+          <div class="loading-anvil">🔨</div>
+          <div class="loading-text">접속 중...</div>
+          <div class="loading-bar"><div class="loading-bar-fill"></div></div>
+          <div id="loading-tip" class="loading-tip"></div>
+        </div>
+      </div>
+
+      <!-- transient toast -->
+      <div id="toast" class="toast hidden"></div>
+    </div>
+  </div>
+
+  <!-- PeerJS for real P2P (vendored locally so it works without a CDN;
+       game degrades to AI practice if it ever fails to load) -->
+  <script src="vendor/peerjs.min.js"></script>
+
+  <!-- game source (classic scripts, loaded in dependency order) -->
+  <script src="js/config.js"></script>
+  <script src="js/state.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/net.js"></script>
+  <script src="js/enhance.js"></script>
+  <script src="js/battle.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
