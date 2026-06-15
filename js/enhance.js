@@ -16,13 +16,30 @@ window.Enhance = (function () {
 
   const order = C.CATEGORIES.map((c) => c.key); // ['sword','armor','stat']
 
+  /* per-level concrete stats shown on each panel (so every 강 is visibly meaningful) */
+  const STAT_DEFS = {
+    sword: [
+      { label: '기본 공격력', get: (s) => s.basic,  fmt: (v) => v.toFixed(1) },
+      { label: '강공격력',    get: (s) => s.strong, fmt: (v) => v.toFixed(1) },
+    ],
+    armor: [
+      { label: '최대 체력',   get: (s) => s.maxHp,   fmt: (v) => Math.round(v) + ' HP' },
+      { label: '피해 감소',   get: (s) => s.defense, fmt: (v) => (v * 100).toFixed(1) + '%' },
+    ],
+    stat: [
+      { label: '이동 속도',   get: (s) => s.speed, fmt: (v) => v.toFixed(2) },
+      { label: '체력 재생',   get: (s) => s.regen, fmt: (v) => v.toFixed(2) + '/s' },
+    ],
+  };
+
   function pct(x) { return (x * 100).toFixed(x < 0.1 ? 1 : 0) + '%'; }
   function activeKey() { return order[st.stageIndex]; }
+  function soloBuild(catKey, lv) { const b = State.freshBuild(); b[catKey] = lv; return b; }
 
   /* ---------- markup ---------- */
   function panelHtml(cat, i) {
     const ms = C.MILESTONES.map(
-      (m) => `<div class="milestone" data-ms="${m}">${cat.skillIcon}<span class="ms-label">${m}강</span></div>`
+      (m) => `<div class="milestone" data-ms="${m}" tabindex="0" role="button" aria-label="${m}강 ${cat.skillName} 스킬 정보">${cat.skillIcon}<span class="ms-label">${m}강</span></div>`
     ).join('');
     return `
       <div class="enhance-panel ${cat.cls}" data-cat="${cat.key}" data-idx="${i}">
@@ -36,7 +53,11 @@ window.Enhance = (function () {
           <span class="ep-level" data-lv>0</span><span class="ep-level-suffix">강</span>
         </div>
         <div class="ep-bar"><div class="ep-bar-fill" data-bar></div></div>
-        <div class="ep-milestones">${ms}</div>
+        <div class="ep-stats" data-stats></div>
+        <div class="ep-milestones">
+          ${ms}
+          <div class="ms-tip" data-mstip></div>
+        </div>
         <div class="ep-odds">
           <div class="odd-row odd-success"><span>성공 확률</span><span class="odd-val" data-odd-success>-</span></div>
           <div class="odd-row odd-fail"><span>실패 확률</span><span class="odd-val" data-odd-fail>-</span></div>
@@ -51,8 +72,62 @@ window.Enhance = (function () {
     C.CATEGORIES.forEach((cat) => {
       const panel = $(`.enhance-panel[data-cat="${cat.key}"]`);
       panel.querySelector('[data-try]').addEventListener('click', () => tryEnhance(cat.key));
+      // milestone (5·7·9·10강) hover/focus/tap -> skill tooltip
+      const tip = panel.querySelector('[data-mstip]');
+      panel.querySelectorAll('.milestone').forEach((mEl) => {
+        const showTip = () => { tip.innerHTML = msTipHtml(cat.key, Number(mEl.dataset.ms)); tip.classList.add('show'); };
+        const hideTip = () => tip.classList.remove('show');
+        mEl.addEventListener('mouseenter', showTip);
+        mEl.addEventListener('mouseleave', hideTip);
+        mEl.addEventListener('focus', showTip);
+        mEl.addEventListener('blur', hideTip);
+        mEl.addEventListener('click', (e) => { e.stopPropagation(); showTip(); }); // touch
+      });
     });
+    // tap anywhere else closes any open milestone tooltip (mobile)
+    document.addEventListener('click', () => $$('.ms-tip.show').forEach((t) => t.classList.remove('show')));
     built = true;
+  }
+
+  /* tooltip describing what a milestone (5/7/9/10강) grants for this skill */
+  function msTipHtml(catKey, m) {
+    const idx = order.indexOf(catKey);
+    const cat = C.CATEGORIES[idx];
+    const tier = C.SKILL_MILESTONES.find((t) => t.lv === m) || { power: 1, cdMult: 1, title: '' };
+    const got = st.build[catKey] >= m;
+    const powerPct = Math.round((tier.power - 1) * 100);
+    const cdSec = (C.SKILL_COOLDOWNS[idx] * tier.cdMult / 1000).toFixed(1);
+    const bonus = [];
+    if (powerPct > 0) bonus.push(`${cat.powerLabel} +${powerPct}%`);
+    bonus.push(`쿨타임 ${cdSec}s`);
+    return `
+      <div class="mst-head">
+        <span class="mst-lv">${m}강</span>
+        <span class="mst-title">${tier.title}</span>
+        <span class="mst-state ${got ? 'on' : ''}">${got ? '달성' : '미달성'}</span>
+      </div>
+      <div class="mst-skill">${cat.skillIcon} ${cat.skillName} <span class="mst-key">${cat.skillKey}</span></div>
+      <div class="mst-desc">${cat.skillDesc}</div>
+      <div class="mst-bonus">${bonus.join(' · ')}</div>`;
+  }
+
+  /* concrete per-level stats (current -> next) shown on each panel */
+  function renderStats(panel, catKey, lv) {
+    const defs = STAT_DEFS[catKey];
+    const cur = State.statsFromBuild(soloBuild(catKey, lv));
+    const nxt = lv < C.MAX_LEVEL ? State.statsFromBuild(soloBuild(catKey, lv + 1)) : null;
+    panel.querySelector('[data-stats]').innerHTML = defs.map((d) => {
+      const cv = d.fmt(d.get(cur));
+      const nv = nxt ? d.fmt(d.get(nxt)) : null;
+      const up = nv && nv !== cv;
+      return `<div class="stat-line">
+          <span class="stat-name">${d.label}</span>
+          <span class="stat-vals">
+            <span class="stat-cur">${cv}</span>
+            ${up ? `<span class="stat-arrow">▲</span><span class="stat-next">${nv}</span>` : ''}
+          </span>
+        </div>`;
+    }).join('');
   }
 
   function buildStageIndicator() {
@@ -82,6 +157,8 @@ window.Enhance = (function () {
     lvEl.textContent = lv;
     lvEl.classList.toggle('maxed', lv >= C.MAX_LEVEL);
     panel.querySelector('[data-bar]').style.width = (lv / C.MAX_LEVEL * 100) + '%';
+
+    renderStats(panel, catKey, lv);
 
     panel.querySelectorAll('.milestone').forEach((m) => {
       m.classList.toggle('lit', lv >= Number(m.dataset.ms));

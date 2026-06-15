@@ -189,17 +189,21 @@ window.Battle = (function () {
     if (!f || f.dead || !running || phase !== 'fighting') return;
     if (!f.stats.skills[idx]) { if (f === me) UI.toast('🔒 ' + C.CATEGORIES[idx].skillName + ' — 5강 필요'); return; }
     if (f.skillCd[idx] > 0) return;
-    f.skillCd[idx] = C.SKILL_COOLDOWNS[idx];
+    const pw = f.stats.skillPower[idx] || 1;                 // 7·9·10강 위력 강화
+    f.skillCd[idx] = C.SKILL_COOLDOWNS[idx] * (f.stats.skillCdMult[idx] || 1); // 9·10강 쿨타임 단축
     if (idx === 0) {
-      const a = { kind: 'skill', t: 0, dur: 40, as: 14, ae: 30, reach: 175, hh: 150, dmg: f.stats.strong * 1.5, kb: 24, hit: false };
+      const a = { kind: 'skill', t: 0, dur: 40, as: 14, ae: 30, reach: 175, hh: 150, dmg: f.stats.strong * 1.5 * pw, kb: 24, hit: false };
       f.atk = a; f.vx += f.facing * 16;
       if (netMode && f === me) Net.send({ t: 'a', kind: 'skill', dmg: a.dmg, reach: a.reach, hh: a.hh, kb: a.kb });
     } else if (idx === 1) {
-      f.shieldT = 2200; spawnRing(f, '#9fc0ef');
+      const dur = Math.round(2200 * pw);
+      f.shieldT = dur; spawnRing(f, '#9fc0ef');
+      if (netMode && f === me) Net.send({ t: 'sk', idx, dur });
     } else if (idx === 2) {
-      f.hasteT = 3500; f.hp = Math.min(f.maxHp, f.hp + f.maxHp * 0.12); spawnRing(f, '#b9a8ff');
+      const dur = Math.round(3500 * pw);
+      f.hasteT = dur; f.hp = Math.min(f.maxHp, f.hp + f.maxHp * 0.12 * pw); spawnRing(f, '#b9a8ff');
+      if (netMode && f === me) Net.send({ t: 'sk', idx, dur });
     }
-    if (netMode && f === me && idx > 0) Net.send({ t: 'sk', idx });
     if (f === me) UI.toast('✨ ' + C.CATEGORIES[idx].skillName + ' 발동!');
   }
 
@@ -217,8 +221,8 @@ window.Battle = (function () {
     } else if (msg.t === 'h') {
       applyDamage(me, msg.dmg, msg.kx, msg.kind);
     } else if (msg.t === 'sk') {
-      if (msg.idx === 1) { opp.shieldT = 2200; spawnRing(opp, '#9fc0ef'); }
-      if (msg.idx === 2) { opp.hasteT = 3500; spawnRing(opp, '#b9a8ff'); }
+      if (msg.idx === 1) { opp.shieldT = msg.dur || 2200; spawnRing(opp, '#9fc0ef'); }
+      if (msg.idx === 2) { opp.hasteT = msg.dur || 3500; spawnRing(opp, '#b9a8ff'); }
     } else if (msg.t === 'dead') {
       if (!ended) finish(me.dead ? 'draw' : 'win');
     }
@@ -523,7 +527,8 @@ window.Battle = (function () {
 
     for (let i = 0; i < 3; i++) {
       const ready = me.stats.skills[i] && me.skillCd[i] <= 0;
-      const h = me.stats.skills[i] ? (me.skillCd[i] / C.SKILL_COOLDOWNS[i] * 100) + '%' : '0%';
+      const cdMax = C.SKILL_COOLDOWNS[i] * (me.stats.skillCdMult[i] || 1);
+      const h = me.stats.skills[i] ? (me.skillCd[i] / cdMax * 100) + '%' : '0%';
       eachSkill(i, (el) => {
         el.classList.toggle('ready', ready);
         const ov = el.querySelector('.skill-cd-overlay'); if (ov) ov.style.height = h;

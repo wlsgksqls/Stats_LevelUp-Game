@@ -26,6 +26,7 @@ window.State = (function () {
 
   /* derived combat stats from a build object */
   function statsFromBuild(b) {
+    const sm = [C.skillMods(b.sword), C.skillMods(b.armor), C.skillMods(b.stat)];
     return {
       maxHp: C.BASE_HP + b.armor * C.HP_PER_ARMOR_LV,
       basic: C.DMG_BASIC_BASE + b.sword * C.DMG_BASIC_PER_LV,
@@ -33,11 +34,9 @@ window.State = (function () {
       defense: Math.min(C.DEF_CAP, b.armor * C.DEF_PER_ARMOR_LV),
       speed: C.SPEED_BASE + b.stat * C.SPEED_PER_STAT_LV,
       regen: b.stat * C.REGEN_PER_STAT_LV,
-      skills: [
-        b.sword >= C.SKILL_UNLOCK_LEVEL,
-        b.armor >= C.SKILL_UNLOCK_LEVEL,
-        b.stat >= C.SKILL_UNLOCK_LEVEL,
-      ],
+      skills: [sm[0].unlocked, sm[1].unlocked, sm[2].unlocked],
+      skillPower: [sm[0].power, sm[1].power, sm[2].power],   // scales each skill's main effect
+      skillCdMult: [sm[0].cdMult, sm[1].cdMult, sm[2].cdMult], // scales each skill's cooldown
     };
   }
 
