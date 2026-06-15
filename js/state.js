@@ -14,7 +14,8 @@ window.State = (function () {
     roomCode: '',
     isHost: false,
     myId: 'p1',            // 'p1' (host) or 'p2' (guest)
-    attemptsLeft: C.MAX_ATTEMPTS,
+    stageIndex: 0,         // 0 sword -> 1 armor -> 2 stat
+    stageAttempts: C.ATTEMPTS_PER_STAGE, // remaining attempts for the CURRENT stage
     build: freshBuild(),
     opponentName: '상대',
     opponentReady: false,
@@ -41,7 +42,8 @@ window.State = (function () {
   }
 
   function resetForRematch() {
-    state.attemptsLeft = C.MAX_ATTEMPTS;
+    state.stageIndex = 0;
+    state.stageAttempts = C.ATTEMPTS_PER_STAGE;
     state.build = freshBuild();
     state.opponentBuild = null;
     state.opponentReady = false;

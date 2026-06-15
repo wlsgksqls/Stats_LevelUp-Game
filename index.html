@@ -76,9 +76,12 @@
         <div class="bg-grid"></div>
         <div class="enhance-inner">
           <div class="enhance-top">
-            <h2 class="screen-heading">강화 단계</h2>
+            <div class="enhance-title-wrap">
+              <h2 class="screen-heading">강화 단계</h2>
+              <div id="stage-indicator" class="stage-indicator"><!-- chips injected by JS --></div>
+            </div>
             <div class="attempts-counter">
-              <span class="attempts-label">남은 강화 횟수</span>
+              <span class="attempts-label" id="attempts-label">검 강화 · 남은 횟수</span>
               <span id="attempts-left" class="attempts-value">30</span>
               <span class="attempts-max">/ 30</span>
             </div>
@@ -90,7 +93,7 @@
 
           <div class="enhance-footer">
             <div id="enhance-ready-status" class="ready-status"></div>
-            <button id="btn-enhance-done" class="btn btn-primary btn-big">전투 준비 완료</button>
+            <button id="btn-stage-next" class="btn btn-primary btn-big">다음 강화단계로 →</button>
           </div>
         </div>
       </section>
@@ -117,6 +120,11 @@
         </div>
 
         <canvas id="battle-canvas" width="1920" height="1080"></canvas>
+
+        <!-- pre-fight 3-second countdown -->
+        <div id="battle-countdown" class="battle-countdown hidden">
+          <span id="countdown-num"></span>
+        </div>
 
         <div class="battle-hud-bottom">
           <div class="hud-group">

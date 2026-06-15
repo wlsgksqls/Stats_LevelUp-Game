@@ -165,8 +165,8 @@
     st.iAmReady = true;
     Net.send({ type: 'ready', build: st.build });
     Enhance.refreshReadyHint();
-    $('#btn-enhance-done').disabled = true;
-    $('#btn-enhance-done').textContent = '상대 대기 중...';
+    $('#btn-stage-next').disabled = true;
+    $('#btn-stage-next').textContent = '상대 대기 중...';
     maybeStartBattle();
   }
 
@@ -181,20 +181,20 @@
     });
   }
 
-  /* realistic AI build: simulate 30 forge attempts with real odds */
+  /* realistic AI build: simulate 30 forge attempts PER category with real odds */
   function aiBuild() {
     const b = { sword: 0, armor: 0, stat: 0 };
-    const keys = ['sword', 'armor', 'stat'];
-    let attempts = C.MAX_ATTEMPTS;
-    while (attempts-- > 0) {
-      const k = keys[(Math.random() * 3) | 0];
-      const lv = b[k];
-      if (lv >= C.MAX_LEVEL) continue;
-      const row = C.ENHANCE_TABLE[lv];
-      const r = Math.random();
-      if (r < row.success) b[k] = lv + 1;
-      else if (r < row.success + row.down) b[k] = Math.max(0, lv - 1);
-    }
+    ['sword', 'armor', 'stat'].forEach((k) => {
+      let attempts = C.ATTEMPTS_PER_STAGE;
+      while (attempts-- > 0) {
+        const lv = b[k];
+        if (lv >= C.MAX_LEVEL) break;
+        const row = C.ENHANCE_TABLE[lv];
+        const r = Math.random();
+        if (r < row.success) b[k] = lv + 1;
+        else if (r < row.success + row.down) b[k] = Math.max(0, lv - 1);
+      }
+    });
     return b;
   }
 
