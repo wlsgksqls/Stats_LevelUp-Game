@@ -37,8 +37,8 @@ window.Battle = (function () {
   let me = null, opp = null;
   let p1 = null, p2 = null;
   let netMode = false;
-  let onEnd = null;
-  let running = false, ended = false;
+  let onEnd = null, onQuit = null;
+  let running = false, ended = false, paused = false;
   let rafId = 0, lastTs = 0, acc = 0;
   const STEP = 1000 / 60;
 
@@ -86,6 +86,8 @@ window.Battle = (function () {
   function start(cfg) {
     netMode = cfg.mode !== 'practice';
     onEnd = cfg.onEnd;
+    onQuit = cfg.onQuit;
+    paused = false;
 
     const hostBuild = st.isHost ? st.build : st.opponentBuild;
     const guestBuild = st.isHost ? st.opponentBuild : st.build;
@@ -128,7 +130,39 @@ window.Battle = (function () {
     rafId = requestAnimationFrame(loop);
   }
 
-  function stop() { running = false; cancelAnimationFrame(rafId); hideCountdown(); }
+  function stop() { running = false; paused = false; cancelAnimationFrame(rafId); hideCountdown(); }
+
+  /* ---------- pause menu (ESC) ---------- */
+  function togglePause() {
+    if (!running || ended) return;
+    if (paused) resumeGame();
+    else openPauseMenu();
+  }
+  function openPauseMenu() {
+    paused = true;
+    keys['a'] = keys['d'] = keys['s'] = false;   // drop held movement so we don't slide on resume
+    UI.popup({
+      title: '⏸ 일시정지',
+      body: '전투가 멈췄습니다. 계속할까요?',
+      actions: [
+        { label: '계속하기', primary: true, onClick: resumeGame },
+        { label: '나가기', danger: true, onClick: quitBattle },
+      ],
+    });
+  }
+  function resumeGame() {
+    if (!paused) return;
+    paused = false;
+    UI.closePopup();
+    lastTs = performance.now();   // avoid a dt spike on the first resumed frame
+  }
+  function quitBattle() {
+    paused = false;
+    UI.closePopup();
+    stop();
+    ended = true;                 // block any pending finish()
+    onQuit && onQuit();
+  }
 
   /* ---------- input ---------- */
   function bindInput() {
@@ -137,8 +171,10 @@ window.Battle = (function () {
     window.addEventListener('keydown', (e) => {
       if (UI.currentScreen() !== 'battle') return;
       const k = e.key.toLowerCase();
+      if (k === 'escape') { e.preventDefault(); togglePause(); return; }
+      if (paused) return;                         // pause menu open: ignore gameplay keys
       keys[k] = true;
-      if (k === 'w' || k === ' ') { e.preventDefault(); jump(me); }
+      if (k === ' ') { e.preventDefault(); jump(me); }   // jump = Spacebar only
       if (k === '1') useSkill(me, 0);
       if (k === '2') useSkill(me, 1);
       if (k === '3') useSkill(me, 2);
@@ -162,12 +198,12 @@ window.Battle = (function () {
 
   /* ---------- actions (blocked during countdown) ---------- */
   function jump(f) {
-    if (!f || f.dead || !running || phase !== 'fighting') return;
+    if (!f || f.dead || !running || paused || phase !== 'fighting') return;
     if (f.onGround || f.coyote > 0) { f.vy = JUMP_V; f.onGround = false; f.onPlatform = false; f.coyote = 0; }
   }
 
   function attack(f, kind) {
-    if (!f || f.dead || !running || f.atk || phase !== 'fighting') return;
+    if (!f || f.dead || !running || paused || f.atk || phase !== 'fighting') return;
     if (kind === 'basic' && f.cd.basic > 0) return;
     if (kind === 'strong' && f.cd.strong > 0) return;
 
@@ -186,7 +222,7 @@ window.Battle = (function () {
   }
 
   function useSkill(f, idx) {
-    if (!f || f.dead || !running || phase !== 'fighting') return;
+    if (!f || f.dead || !running || paused || phase !== 'fighting') return;
     if (!f.stats.skills[idx]) { if (f === me) UI.toast('🔒 ' + C.CATEGORIES[idx].skillName + ' — 5강 필요'); return; }
     if (f.skillCd[idx] > 0) return;
     const pw = f.stats.skillPower[idx] || 1;                 // 7·9·10강 위력 강화
@@ -412,6 +448,7 @@ window.Battle = (function () {
   /* ---------- loop ---------- */
   function loop(ts) {
     if (!running) return;
+    if (paused) { lastTs = ts; rafId = requestAnimationFrame(loop); return; } // freeze sim, keep frame
     let dt = ts - lastTs; lastTs = ts;
     if (dt > 100) dt = 100;
     animClock += dt;
