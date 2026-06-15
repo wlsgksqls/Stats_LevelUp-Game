@@ -38,6 +38,7 @@ window.CONFIG = (function () {
 
   return {
     MAX_ATTEMPTS: 30,
+    ATTEMPTS_PER_STAGE: 30,    // 검 / 방어구 / 능력치 each get their own 30
     MAX_LEVEL: 10,
     MILESTONES: [5, 7, 9, 10],
     ENHANCE_TABLE,

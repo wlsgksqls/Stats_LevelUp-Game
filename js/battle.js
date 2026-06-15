@@ -3,6 +3,10 @@
    World coords are shared by both peers: p1 (host) on the left,
    p2 (guest) on the right. Each peer drives only its own
    fighter and announces hits / death to the other.
+
+   Art style: illustrated dark-fantasy arena + armored knights
+   (shaded, outlined) rather than neon shapes. A 3s countdown
+   plays before the fight begins.
    ============================================================ */
 window.Battle = (function () {
   const C = window.CONFIG;
@@ -13,9 +17,14 @@ window.Battle = (function () {
   const W = 1920, H = 1080, GROUND_Y = 880;
   const GRAVITY = 0.92, JUMP_V = -20, FRICTION = 0.80, MAXFALL = 26;
 
+  /* muted, painted palettes (no neon) */
+  const PAL_P1 = { armor: '#54688f', armorL: '#90a9d2', armorD: '#313c57', cape: '#2c4a7a', capeD: '#1c3052', plume: '#7c9fd0', accent: '#7c9fd0' };
+  const PAL_P2 = { armor: '#8f5a54', armorL: '#d29790', armorD: '#573332', cape: '#7a3030', capeD: '#521d1d', plume: '#cf7a72', accent: '#cf7a72' };
+  const METAL = '#cdd4dd', METAL_D = '#828c9b', GOLD = '#c9a227', OUT = '#0d0b12';
+
   let canvas, ctx;
-  let me = null, opp = null;            // fighters
-  let p1 = null, p2 = null;             // left/right references (for HUD)
+  let me = null, opp = null;
+  let p1 = null, p2 = null;
   let netMode = false;
   let onEnd = null;
   let running = false, ended = false;
@@ -27,23 +36,35 @@ window.Battle = (function () {
   let particles = [];
   let netAcc = 0;
 
+  let phase = 'fighting';     // 'countdown' | 'fighting'
+  let countdownT = 0, lastCount = null;
+  let animClock = 0;
+  let stars = null;
+
   const keys = Object.create(null);
   let inputBound = false;
 
+  /* ---------- math helpers ---------- */
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const rad = (d) => d * Math.PI / 180;
+
   /* ---------- fighter factory ---------- */
-  function makeFighter(id, x, build, name, color) {
+  function makeFighter(id, x, build, name) {
     const s = State.statsFromBuild(build);
+    const pal = id === 'p1' ? PAL_P1 : PAL_P2;
     return {
-      id, name, color, build, stats: s,
+      id, name, pal, color: pal.accent, build, stats: s,
       x, y: GROUND_Y, vx: 0, vy: 0,
       w: 64, h: 150, facing: id === 'p1' ? 1 : -1,
       onGround: true,
       hp: s.maxHp, maxHp: s.maxHp,
       cd: { basic: 0, strong: 0 },
       skillCd: [0, 0, 0],
-      atk: null,            // {kind,t,dur,as,ae,reach,hh,dmg,kb,hit}
+      atk: null,
       shieldT: 0, hasteT: 0, regenAcc: 0,
       hurt: 0, dead: false,
+      step: 0, bobPhase: Math.random() * Math.PI * 2,
       ai: null,
     };
   }
@@ -58,8 +79,8 @@ window.Battle = (function () {
     const hostName = st.isHost ? st.nickname : st.opponentName;
     const guestName = st.isHost ? st.opponentName : st.nickname;
 
-    p1 = makeFighter('p1', 520, hostBuild || State.freshBuild(), hostName || 'P1', '#2ff3ff');
-    p2 = makeFighter('p2', W - 520, guestBuild || State.freshBuild(), guestName || 'P2', '#ff3df0');
+    p1 = makeFighter('p1', 520, hostBuild || State.freshBuild(), hostName || 'P1');
+    p2 = makeFighter('p2', W - 520, guestBuild || State.freshBuild(), guestName || 'P2');
 
     if (st.mode === 'practice') {
       me = p1; opp = p2; opp.ai = { t: 0, decide: 0, intent: 'approach' };
@@ -73,7 +94,6 @@ window.Battle = (function () {
     ctx = canvas.getContext('2d');
     bindInput();
 
-    // HUD static labels
     $('#hud-name-p1').textContent = p1.name;
     $('#hud-name-p2').textContent = p2.name;
     setupSkillHud();
@@ -82,15 +102,16 @@ window.Battle = (function () {
     particles = []; ended = false; running = true;
     $('#overtime-badge').classList.add('hidden');
 
+    phase = 'countdown'; countdownT = 3.0; lastCount = null; animClock = 0;
+    if (!stars) stars = makeStars();
+    showCountdown();
+
     updateHud();
     lastTs = performance.now(); acc = 0;
     rafId = requestAnimationFrame(loop);
   }
 
-  function stop() {
-    running = false;
-    cancelAnimationFrame(rafId);
-  }
+  function stop() { running = false; cancelAnimationFrame(rafId); hideCountdown(); }
 
   /* ---------- input ---------- */
   function bindInput() {
@@ -116,14 +137,14 @@ window.Battle = (function () {
     cv.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
-  /* ---------- actions ---------- */
+  /* ---------- actions (blocked during countdown) ---------- */
   function jump(f) {
-    if (!f || f.dead || !running) return;
+    if (!f || f.dead || !running || phase !== 'fighting') return;
     if (f.onGround) { f.vy = JUMP_V; f.onGround = false; }
   }
 
   function attack(f, kind) {
-    if (!f || f.dead || !running || f.atk) return;
+    if (!f || f.dead || !running || f.atk || phase !== 'fighting') return;
     if (kind === 'basic' && f.cd.basic > 0) return;
     if (kind === 'strong' && f.cd.strong > 0) return;
 
@@ -132,7 +153,7 @@ window.Battle = (function () {
     if (kind === 'basic') {
       a = { kind, t: 0, dur: 18, as: 7, ae: 13, reach: 96, hh: 96, dmg: base, kb: 9 };
       f.cd.basic = 26;
-    } else { // strong
+    } else {
       a = { kind, t: 0, dur: 34, as: 16, ae: 24, reach: 128, hh: 120, dmg: f.stats.strong, kb: 18 };
       f.cd.strong = 64;
     }
@@ -142,24 +163,18 @@ window.Battle = (function () {
   }
 
   function useSkill(f, idx) {
-    if (!f || f.dead || !running) return;
+    if (!f || f.dead || !running || phase !== 'fighting') return;
     if (!f.stats.skills[idx]) { if (f === me) UI.toast('🔒 ' + C.CATEGORIES[idx].skillName + ' — 5강 필요'); return; }
     if (f.skillCd[idx] > 0) return;
     f.skillCd[idx] = C.SKILL_COOLDOWNS[idx];
     if (idx === 0) {
-      // 강철 베기 — big lunging slash
       const a = { kind: 'skill', t: 0, dur: 40, as: 14, ae: 30, reach: 175, hh: 150, dmg: f.stats.strong * 1.5, kb: 24, hit: false };
       f.atk = a; f.vx += f.facing * 16;
       if (netMode && f === me) Net.send({ t: 'a', kind: 'skill', dmg: a.dmg, reach: a.reach, hh: a.hh, kb: a.kb });
     } else if (idx === 1) {
-      // 불굴의 방벽 — invulnerable shield
-      f.shieldT = 2200;
-      spawnRing(f, '#2ff3ff');
+      f.shieldT = 2200; spawnRing(f, '#9fc0ef');
     } else if (idx === 2) {
-      // 질풍 가속 — haste + heal
-      f.hasteT = 3500;
-      f.hp = Math.min(f.maxHp, f.hp + f.maxHp * 0.12);
-      spawnRing(f, '#9a6bff');
+      f.hasteT = 3500; f.hp = Math.min(f.maxHp, f.hp + f.maxHp * 0.12); spawnRing(f, '#b9a8ff');
     }
     if (netMode && f === me && idx > 0) Net.send({ t: 'sk', idx });
     if (f === me) UI.toast('✨ ' + C.CATEGORIES[idx].skillName + ' 발동!');
@@ -169,20 +184,17 @@ window.Battle = (function () {
   function handleNetData(msg) {
     if (!msg || !msg.t) return;
     if (msg.t === 's') {
-      // opponent's authoritative state about itself
       opp.x = msg.x; opp.y = msg.y; opp.vx = msg.vx; opp.facing = msg.facing;
       opp.hp = msg.hp; opp.shieldT = msg.shield ? 1 : 0; opp.hasteT = msg.haste ? 1 : 0;
       opp.onGround = msg.g;
     } else if (msg.t === 'a') {
-      // opponent started a swing — visual only on our side
       opp.atk = { kind: msg.kind, t: 0, dur: msg.kind === 'strong' ? 34 : msg.kind === 'skill' ? 40 : 18,
                   as: 99, ae: 99, reach: msg.reach, hh: msg.hh, dmg: 0, kb: 0, hit: true };
     } else if (msg.t === 'h') {
-      // we got hit
       applyDamage(me, msg.dmg, msg.kx, msg.kind);
     } else if (msg.t === 'sk') {
-      if (msg.idx === 1) { opp.shieldT = 2200; spawnRing(opp, '#2ff3ff'); }
-      if (msg.idx === 2) { opp.hasteT = 3500; spawnRing(opp, '#9a6bff'); }
+      if (msg.idx === 1) { opp.shieldT = 2200; spawnRing(opp, '#9fc0ef'); }
+      if (msg.idx === 2) { opp.hasteT = 3500; spawnRing(opp, '#b9a8ff'); }
     } else if (msg.t === 'dead') {
       if (!ended) finish(me.dead ? 'draw' : 'win');
     }
@@ -198,13 +210,11 @@ window.Battle = (function () {
     f.vy = Math.min(f.vy, -6);
     f.onGround = false;
     f.hurt = 12;
-    spawnHit((f.x), f.y - f.h * 0.55, f.color, kind);
-    UI.toast && void 0;
+    spawnHit(f.x, f.y - f.h * 0.55, kind);
   }
 
-  /* ---------- simulation step ---------- */
+  /* ---------- simulation ---------- */
   function physics(f) {
-    // face the opponent (1v1)
     const other = (f === p1) ? p2 : p1;
     if (other) f.facing = other.x >= f.x ? 1 : -1;
 
@@ -214,7 +224,7 @@ window.Battle = (function () {
       if (keys['a']) dir -= 1;
       if (keys['d']) dir += 1;
       f.vx += dir * speed * 0.5;
-      if (keys['s'] && !f.onGround) f.vy += 2.2; // fast fall
+      if (keys['s'] && !f.onGround) f.vy += 2.2;
     } else if (f.ai && !f.dead) {
       aiThink(f, speed);
     }
@@ -230,7 +240,6 @@ window.Battle = (function () {
       if (f.y >= GROUND_Y) { f.y = GROUND_Y; f.vy = 0; f.onGround = true; }
     }
 
-    // timers
     if (f.cd.basic > 0) f.cd.basic--;
     if (f.cd.strong > 0) f.cd.strong--;
     for (let i = 0; i < 3; i++) if (f.skillCd[i] > 0) f.skillCd[i] = Math.max(0, f.skillCd[i] - STEP);
@@ -238,17 +247,12 @@ window.Battle = (function () {
     if (f.hasteT > 0) f.hasteT = Math.max(0, f.hasteT - STEP);
     if (f.hurt > 0) f.hurt--;
 
-    // passive regen from 능력치
     if (f.stats.regen > 0 && !f.dead && f.hp > 0) {
       f.regenAcc += f.stats.regen * (STEP / 1000);
       if (f.regenAcc >= 1) { f.hp = Math.min(f.maxHp, f.hp + Math.floor(f.regenAcc)); f.regenAcc -= Math.floor(f.regenAcc); }
     }
 
-    // attack progression
-    if (f.atk) {
-      f.atk.t++;
-      if (f.atk.t > f.atk.dur) f.atk = null;
-    }
+    if (f.atk) { f.atk.t++; if (f.atk.t > f.atk.dur) f.atk = null; }
   }
 
   function hitboxOf(f) {
@@ -260,9 +264,7 @@ window.Battle = (function () {
     return { x, y, w: reach, h: f.atk.hh };
   }
   function bodyOf(f) { return { x: f.x - f.w / 2, y: f.y - f.h, w: f.w, h: f.h }; }
-  function overlap(a, b) {
-    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
-  }
+  function overlap(a, b) { return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y; }
 
   function resolveHits(attacker, defender) {
     if (!attacker.atk || attacker.atk.hit) return;
@@ -271,16 +273,15 @@ window.Battle = (function () {
     if (overlap(hb, bodyOf(defender))) {
       attacker.atk.hit = true;
       if (netMode) {
-        // only `me` does hit detection in net mode
         Net.send({ t: 'h', dmg: attacker.atk.dmg, kx: attacker.facing, kind: attacker.atk.kind });
-        spawnHit(defender.x, defender.y - defender.h * 0.55, defender.color, attacker.atk.kind);
+        spawnHit(defender.x, defender.y - defender.h * 0.55, attacker.atk.kind);
       } else {
         applyDamage(defender, attacker.atk.dmg, attacker.facing, attacker.atk.kind);
       }
     }
   }
 
-  /* ---------- simple AI ---------- */
+  /* ---------- AI ---------- */
   function aiThink(f, speed) {
     const target = me;
     const dx = target.x - f.x;
@@ -288,7 +289,6 @@ window.Battle = (function () {
     const dir = Math.sign(dx) || 1;
     f.ai.t += STEP;
 
-    // low hp -> sometimes shield/haste
     if (f.hp < f.maxHp * 0.35) {
       if (f.stats.skills[1] && f.skillCd[1] <= 0 && Math.random() < 0.02) useSkill(f, 1);
       if (f.stats.skills[2] && f.skillCd[2] <= 0 && Math.random() < 0.02) useSkill(f, 2);
@@ -299,7 +299,6 @@ window.Battle = (function () {
       if (target.y < GROUND_Y - 40 && f.onGround && Math.random() < 0.03) jump(f);
       if (Math.random() < 0.01 && f.onGround) jump(f);
     } else {
-      // in range: attack with reaction delay
       if (f.ai.t > 650 + Math.random() * 650) {
         f.ai.t = 0;
         const r = Math.random();
@@ -307,45 +306,46 @@ window.Battle = (function () {
         else if (r < 0.38) attack(f, 'strong');
         else attack(f, 'basic');
       }
-      // spacing jitter
       if (Math.random() < 0.02) f.vx += dir * speed * 0.3;
       if (Math.random() < 0.012 && f.onGround) jump(f);
     }
   }
 
   /* ---------- particles ---------- */
-  function spawnHit(x, y, color, kind) {
+  const SPARKS = ['#ffe6a8', '#ffb867', '#ff7a47', '#ffffff'];
+  function spawnHit(x, y, kind) {
     const n = kind === 'strong' || kind === 'skill' ? 22 : 12;
     for (let i = 0; i < n; i++) {
       const ang = Math.random() * Math.PI * 2, sp = 2 + Math.random() * (kind === 'basic' ? 7 : 12);
-      particles.push({ x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 2, life: 1, decay: 0.04 + Math.random() * 0.04, color, size: 2 + Math.random() * 4 });
+      particles.push({ x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 2, life: 1, decay: 0.04 + Math.random() * 0.04, color: SPARKS[(Math.random() * SPARKS.length) | 0], size: 2 + Math.random() * 4 });
     }
   }
   function spawnRing(f, color) {
     for (let i = 0; i < 28; i++) {
       const ang = (i / 28) * Math.PI * 2;
-      particles.push({ x: f.x, y: f.y - f.h * 0.5, vx: Math.cos(ang) * 6, vy: Math.sin(ang) * 6, life: 1, decay: 0.03, color, size: 4 });
+      particles.push({ x: f.x, y: f.y - f.h * 0.5, vx: Math.cos(ang) * 6, vy: Math.sin(ang) * 6, life: 1, decay: 0.03, color, size: 4, grav: 0.05 });
     }
   }
   function spawnBlock(f) {
     for (let i = 0; i < 14; i++) {
       const ang = Math.random() * Math.PI * 2;
-      particles.push({ x: f.x, y: f.y - f.h * 0.5, vx: Math.cos(ang) * 4, vy: Math.sin(ang) * 4, life: 1, decay: 0.05, color: '#cfefff', size: 3 });
+      particles.push({ x: f.x, y: f.y - f.h * 0.5, vx: Math.cos(ang) * 4, vy: Math.sin(ang) * 4, life: 1, decay: 0.05, color: '#cfe2ff', size: 3 });
     }
   }
   function stepParticles() {
     for (let i = particles.length - 1; i >= 0; i--) {
       const p = particles[i];
-      p.x += p.vx; p.y += p.vy; p.vy += 0.3; p.life -= p.decay;
+      p.x += p.vx; p.y += p.vy; p.vy += (p.grav == null ? 0.3 : p.grav); p.life -= p.decay;
       if (p.life <= 0) particles.splice(i, 1);
     }
   }
 
-  /* ---------- main loop ---------- */
+  /* ---------- loop ---------- */
   function loop(ts) {
     if (!running) return;
     let dt = ts - lastTs; lastTs = ts;
     if (dt > 100) dt = 100;
+    animClock += dt;
     acc += dt;
     while (acc >= STEP) { update(STEP); acc -= STEP; }
     render();
@@ -355,15 +355,22 @@ window.Battle = (function () {
   function update(ms) {
     if (ended) return;
 
+    if (phase === 'countdown') {
+      countdownT -= ms / 1000;
+      updateCountdown();
+      if (countdownT <= -0.55) { phase = 'fighting'; hideCountdown(); }
+      // still age torch embers so the arena looks alive
+      stepParticles();
+      return;
+    }
+
     physics(p1); physics(p2);
 
-    // hit resolution
     if (netMode) { resolveHits(me, opp); }
     else { resolveHits(p1, p2); resolveHits(p2, p1); }
 
     stepParticles();
 
-    // timer / overtime
     if (!overtime) {
       timeLeft -= ms / 1000;
       if (timeLeft <= 0) { timeLeft = 0; overtime = true; $('#overtime-badge').classList.remove('hidden'); }
@@ -371,15 +378,13 @@ window.Battle = (function () {
       otAcc += ms;
       if (otAcc >= C.OVERTIME_TICK_INTERVAL) {
         otAcc -= C.OVERTIME_TICK_INTERVAL;
-        // each peer ticks only its own fighter; practice ticks both
         const tickTargets = netMode ? [me] : [p1, p2];
         tickTargets.forEach((f) => {
-          if (!f.dead) { f.hp = Math.max(0, f.hp - C.OVERTIME_TICK); spawnHit(f.x, f.y - f.h * 0.55, '#ff4d5e', 'basic'); }
+          if (!f.dead) { f.hp = Math.max(0, f.hp - C.OVERTIME_TICK); spawnHit(f.x, f.y - f.h * 0.55, 'basic'); }
         });
       }
     }
 
-    // net sync (about my own fighter)
     if (netMode) {
       netAcc += ms;
       if (netAcc >= 33) {
@@ -388,12 +393,10 @@ window.Battle = (function () {
       }
     }
 
-    // death detection
     if (netMode) {
       if (me.hp <= 0 && !me.dead) { me.dead = true; Net.send({ t: 'dead' }); finish('lose'); }
     } else {
-      const a = p1.hp <= 0, b = p2.hp <= 0;
-      if (a || b) {
+      if (p1.hp <= 0 || p2.hp <= 0) {
         const meDead = me.hp <= 0, oppDead = opp.hp <= 0;
         if (meDead && oppDead) finish('draw');
         else if (oppDead) finish('win');
@@ -411,6 +414,20 @@ window.Battle = (function () {
     st.lastResult = result;
     setTimeout(() => onEnd && onEnd(result), 700);
   }
+
+  /* ---------- countdown DOM ---------- */
+  function showCountdown() { const el = $('#battle-countdown'); el.classList.remove('hidden'); lastCount = null; updateCountdown(); }
+  function updateCountdown() {
+    const el = $('#battle-countdown'), num = $('#countdown-num');
+    const label = countdownT > 0 ? String(Math.ceil(countdownT)) : '시작!';
+    if (label !== lastCount) {
+      lastCount = label;
+      num.textContent = label;
+      el.classList.toggle('cd-go', countdownT <= 0);
+      num.classList.remove('cd-pop'); void num.offsetWidth; num.classList.add('cd-pop');
+    }
+  }
+  function hideCountdown() { $('#battle-countdown').classList.add('hidden'); }
 
   /* ---------- HUD ---------- */
   function setupSkillHud() {
@@ -436,7 +453,6 @@ window.Battle = (function () {
     t.textContent = mm + ':' + String(ssn).padStart(2, '0');
     t.classList.toggle('urgent', timeLeft <= 10 && !overtime);
 
-    // skill cooldown overlays
     ['#skill-1', '#skill-2', '#skill-3'].forEach((sel, i) => {
       const el = $(sel);
       const ready = me.stats.skills[i] && me.skillCd[i] <= 0;
@@ -446,135 +462,168 @@ window.Battle = (function () {
     });
   }
 
-  /* ---------- render ---------- */
+  /* ============================================================
+     RENDER
+     ============================================================ */
   function render() {
     ctx.clearRect(0, 0, W, H);
     drawStage();
-    // draw far fighter first for slight depth (right one behind)
+    // draw the rear (right) knight first for a touch of depth
     drawFighter(p1); drawFighter(p2);
     drawParticles();
   }
 
+  /* ---------- stage (dark-fantasy arena) ---------- */
+  function makeStars() {
+    const arr = [];
+    for (let i = 0; i < 90; i++) arr.push({ x: Math.random() * W, y: Math.random() * (GROUND_Y - 380), s: Math.random() < 0.85 ? 2 : 3, p: Math.random() * 6.28 });
+    return arr;
+  }
+
   function drawStage() {
-    // sky
-    const g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, '#160d33'); g.addColorStop(0.6, '#0a0e22'); g.addColorStop(1, '#05060f');
-    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    const t = animClock;
+    // dusk sky
+    const sky = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+    sky.addColorStop(0, '#15131f'); sky.addColorStop(0.55, '#231a2b'); sky.addColorStop(1, '#3a2731');
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, GROUND_Y);
 
-    // distant neon pillars
-    ctx.save();
-    for (let i = 0; i < 7; i++) {
-      const x = 120 + i * 270;
-      ctx.fillStyle = i % 2 ? 'rgba(255,61,240,0.06)' : 'rgba(47,243,255,0.06)';
-      ctx.fillRect(x, 200, 90, GROUND_Y - 200);
-    }
-    ctx.restore();
+    // stars
+    for (const s of stars) { ctx.globalAlpha = (0.35 + 0.55 * Math.abs(Math.sin(t / 600 + s.p))) * 0.7; ctx.fillStyle = '#dfe3ff'; ctx.fillRect(s.x, s.y, s.s, s.s); }
+    ctx.globalAlpha = 1;
 
-    // ground
-    ctx.fillStyle = '#0c1130';
-    ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
-    ctx.strokeStyle = 'rgba(47,243,255,0.4)'; ctx.lineWidth = 4;
-    ctx.beginPath(); ctx.moveTo(0, GROUND_Y); ctx.lineTo(W, GROUND_Y); ctx.stroke();
-    // ground grid
-    ctx.strokeStyle = 'rgba(47,243,255,0.08)'; ctx.lineWidth = 2;
-    for (let x = 0; x < W; x += 80) { ctx.beginPath(); ctx.moveTo(x, GROUND_Y); ctx.lineTo(x - 60, H); ctx.stroke(); }
+    // moon with halo + craters
+    const mx = 1480, my = 215;
+    const halo = ctx.createRadialGradient(mx, my, 12, mx, my, 200);
+    halo.addColorStop(0, 'rgba(238,231,205,0.5)'); halo.addColorStop(0.35, 'rgba(220,210,180,0.16)'); halo.addColorStop(1, 'rgba(220,210,180,0)');
+    ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(mx, my, 200, 0, 6.3); ctx.fill();
+    ctx.fillStyle = '#e8e2c8'; ctx.beginPath(); ctx.arc(mx, my, 72, 0, 6.3); ctx.fill();
+    ctx.fillStyle = 'rgba(150,144,118,0.45)';
+    ctx.beginPath(); ctx.arc(mx - 22, my - 16, 13, 0, 6.3); ctx.arc(mx + 26, my + 12, 10, 0, 6.3); ctx.arc(mx + 4, my + 32, 8, 0, 6.3); ctx.fill();
+
+    // drifting cloud bands
+    drawClouds(t);
+
+    // far mountains (parallax layers)
+    drawMountains('#1a1525', 0, 150);
+    drawMountains('#231a2c', 46, 100);
+
+    // castle wall + arches + banners
+    drawWall();
+
+    // torches
+    drawTorch(250, GROUND_Y - 250, t);
+    drawTorch(W - 250, GROUND_Y - 250, t);
+
+    // stone floor
+    drawGround();
+
+    // foreground vignette for depth
+    const vg = ctx.createRadialGradient(W / 2, GROUND_Y - 120, 320, W / 2, GROUND_Y - 120, 1150);
+    vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.5)');
+    ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
   }
 
-  function drawFighter(f) {
-    const bodyX = f.x, top = f.y - f.h;
+  function drawClouds(t) {
     ctx.save();
-
-    // shadow
-    ctx.fillStyle = 'rgba(0,0,0,0.4)';
-    ctx.beginPath(); ctx.ellipse(f.x, GROUND_Y + 6, 46, 12, 0, 0, Math.PI * 2); ctx.fill();
-
-    // hurt flash / death dim
-    const flash = f.hurt > 0 && (f.hurt % 4 < 2);
-    const main = f.dead ? '#444' : (flash ? '#ffffff' : f.color);
-
-    // body
-    ctx.shadowColor = f.color; ctx.shadowBlur = f.dead ? 0 : 18;
-    ctx.fillStyle = main;
-    roundRect(bodyX - f.w / 2, top + 36, f.w, f.h - 36, 12); ctx.fill();
-    // head
-    ctx.beginPath(); ctx.arc(bodyX, top + 22, 22, 0, Math.PI * 2); ctx.fill();
-    ctx.shadowBlur = 0;
-
-    // eyes (facing)
-    ctx.fillStyle = '#05060f';
-    ctx.fillRect(bodyX + f.facing * 4 - 3, top + 16, 6, 6);
-
-    // armor plating glow by armor level
-    const armorLv = f.build.armor;
-    if (armorLv > 0) {
-      ctx.strokeStyle = `rgba(47,243,255,${0.25 + armorLv * 0.06})`; ctx.lineWidth = 3;
-      roundRect(bodyX - f.w / 2 - 3, top + 40, f.w + 6, 50, 8); ctx.stroke();
+    ctx.fillStyle = 'rgba(20,16,28,0.55)';
+    const off = (t / 90) % (W + 400);
+    for (let i = 0; i < 4; i++) {
+      const cx = ((i * 560 + off) % (W + 500)) - 250;
+      const cy = 120 + (i % 2) * 70;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, 170, 34, 0, 0, 6.3);
+      ctx.ellipse(cx + 120, cy + 10, 120, 26, 0, 0, 6.3);
+      ctx.ellipse(cx - 110, cy + 14, 100, 22, 0, 0, 6.3);
+      ctx.fill();
     }
-
-    // weapon (sword) — length scales with sword level
-    const swLen = 60 + f.build.sword * 9;
-    const hx = bodyX + f.facing * (f.w / 2 + 6);
-    const hy = top + 70;
-    ctx.save();
-    ctx.translate(hx, hy);
-    let ang = f.facing === 1 ? -0.5 : Math.PI + 0.5;
-    if (f.atk) {
-      const prog = Math.min(1, f.atk.t / f.atk.dur);
-      const swing = (f.atk.kind === 'basic' ? 1.6 : 2.4);
-      ang += f.facing * (-0.8 + prog * swing);
-    }
-    ctx.rotate(ang);
-    ctx.shadowColor = f.build.sword >= 5 ? '#ffd23f' : '#bcd';
-    ctx.shadowBlur = f.dead ? 0 : 12;
-    ctx.fillStyle = f.build.sword >= 9 ? '#ffd23f' : '#d7e6ff';
-    ctx.fillRect(0, -4, swLen, 8);
-    ctx.fillStyle = '#7a5a2a'; ctx.fillRect(-10, -6, 12, 12); // hilt
-    ctx.restore();
-
-    // attack swoosh
-    if (f.atk && f.atk.t >= f.atk.as && f.atk.t <= f.atk.ae) {
-      const hb = hitboxOf(f);
-      if (hb) {
-        ctx.fillStyle = f.atk.kind === 'skill' ? 'rgba(255,210,63,0.28)'
-          : f.atk.kind === 'strong' ? 'rgba(255,61,240,0.25)' : 'rgba(47,243,255,0.22)';
-        ctx.beginPath();
-        ctx.ellipse(hb.x + hb.w / 2, hb.y + hb.h / 2, hb.w / 2, hb.h / 2, 0, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
-    // shield bubble
-    if (f.shieldT > 0) {
-      ctx.strokeStyle = 'rgba(47,243,255,0.8)'; ctx.lineWidth = 4;
-      ctx.shadowColor = '#2ff3ff'; ctx.shadowBlur = 20;
-      ctx.beginPath(); ctx.arc(bodyX, top + f.h / 2, f.h * 0.62, 0, Math.PI * 2); ctx.stroke();
-      ctx.shadowBlur = 0;
-    }
-    // haste trail
-    if (f.hasteT > 0) {
-      ctx.fillStyle = 'rgba(154,107,255,0.3)';
-      roundRect(bodyX - f.w / 2 - f.facing * 22, top + 36, f.w, f.h - 36, 12); ctx.fill();
-    }
-
-    // name tag
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = f.color; ctx.font = 'bold 22px Orbitron, sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText(f.name, bodyX, top - 14);
-
     ctx.restore();
   }
 
-  function drawParticles() {
-    particles.forEach((p) => {
-      ctx.globalAlpha = Math.max(0, p.life);
-      ctx.fillStyle = p.color;
-      ctx.shadowColor = p.color; ctx.shadowBlur = 8;
-      ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
-    });
-    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+  function drawMountains(color, yOff, amp) {
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.moveTo(0, GROUND_Y);
+    for (let x = 0; x <= W; x += 36) {
+      const y = GROUND_Y - 150 - yOff - amp * (0.5 + 0.5 * Math.sin(x * 0.0032 + yOff) + 0.32 * Math.sin(x * 0.011 + 2));
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(W, GROUND_Y); ctx.closePath(); ctx.fill();
   }
 
-  function roundRect(x, y, w, h, r) {
+  function drawWall() {
+    const top = GROUND_Y - 330, h = 330;
+    // wall face
+    const wg = ctx.createLinearGradient(0, top, 0, GROUND_Y);
+    wg.addColorStop(0, '#241f2c'); wg.addColorStop(1, '#191521');
+    ctx.fillStyle = wg; ctx.fillRect(0, top, W, h);
+    // arched openings (dark)
+    ctx.fillStyle = '#100d16';
+    for (let i = 0; i < 6; i++) {
+      const ax = 90 + i * 320;
+      ctx.beginPath();
+      ctx.moveTo(ax, GROUND_Y);
+      ctx.lineTo(ax, top + 130);
+      ctx.arc(ax + 95, top + 130, 95, Math.PI, 0);
+      ctx.lineTo(ax + 190, GROUND_Y);
+      ctx.closePath(); ctx.fill();
+    }
+    // stone block seams
+    ctx.strokeStyle = 'rgba(0,0,0,0.28)'; ctx.lineWidth = 2;
+    for (let y = top; y < GROUND_Y; y += 46) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+    for (let x = 0; x < W; x += 92) { ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, GROUND_Y); ctx.stroke(); }
+    // hanging banners
+    for (let i = 0; i < 3; i++) {
+      const bx = 250 + i * 640;
+      ctx.fillStyle = '#6e2230'; ctx.fillRect(bx, top + 26, 44, 190);
+      ctx.beginPath(); ctx.moveTo(bx, top + 216); ctx.lineTo(bx + 22, top + 246); ctx.lineTo(bx + 44, top + 216); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = GOLD; ctx.fillRect(bx + 16, top + 70, 12, 12);
+      ctx.beginPath(); ctx.arc(bx + 22, top + 110, 12, 0, 6.3); ctx.stroke();
+    }
+  }
+
+  function flameShape(x, y, w, hgt) {
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.quadraticCurveTo(x - w, y - hgt * 0.45, x, y - hgt);
+    ctx.quadraticCurveTo(x + w, y - hgt * 0.45, x, y);
+    ctx.closePath(); ctx.fill();
+  }
+
+  function drawTorch(x, y, t) {
+    // glow
+    const fl = 0.78 + 0.22 * Math.sin(t / 90) + 0.08 * Math.sin(t / 33);
+    const g = ctx.createRadialGradient(x, y - 26, 6, x, y - 26, 170 * fl);
+    g.addColorStop(0, 'rgba(255,168,80,0.42)'); g.addColorStop(1, 'rgba(255,140,60,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y - 26, 170 * fl, 0, 6.3); ctx.fill();
+    // bracket
+    ctx.fillStyle = '#241f29'; ctx.fillRect(x - 7, y, 14, 96);
+    ctx.fillStyle = '#39323f'; ctx.fillRect(x - 18, y - 12, 36, 18);
+    // flame
+    ctx.fillStyle = '#ff7a2f'; flameShape(x, y - 6, 26, 70 * fl);
+    ctx.fillStyle = '#ffb04a'; flameShape(x, y - 6, 17, 52 * fl);
+    ctx.fillStyle = '#ffe39a'; flameShape(x, y - 6, 8, 30 * fl);
+    // embers
+    if (Math.random() < 0.35) particles.push({ x: x + (Math.random() * 18 - 9), y: y - 36, vx: (Math.random() - 0.5) * 1.1, vy: -1 - Math.random() * 1.2, life: 1, decay: 0.012 + Math.random() * 0.01, color: '#ffae5c', size: 2, grav: -0.03 });
+  }
+
+  function drawGround() {
+    const g = ctx.createLinearGradient(0, GROUND_Y, 0, H);
+    g.addColorStop(0, '#3c3641'); g.addColorStop(1, '#1c1822');
+    ctx.fillStyle = g; ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+    ctx.fillStyle = '#4a4350'; ctx.fillRect(0, GROUND_Y, W, 6);
+    ctx.fillStyle = '#161219'; ctx.fillRect(0, GROUND_Y + 6, W, 4);
+    // perspective flagstones
+    ctx.strokeStyle = 'rgba(0,0,0,0.32)'; ctx.lineWidth = 2;
+    for (let i = -12; i <= 12; i++) { ctx.beginPath(); ctx.moveTo(W / 2 + i * 62, GROUND_Y); ctx.lineTo(W / 2 + i * 168, H); ctx.stroke(); }
+    for (let y = GROUND_Y + 46; y < H; y += 58) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+    // faint arena emblem
+    ctx.save(); ctx.globalAlpha = 0.12; ctx.strokeStyle = GOLD; ctx.lineWidth = 6;
+    ctx.beginPath(); ctx.arc(W / 2, GROUND_Y + 96, 86, 0, 6.3); ctx.stroke();
+    ctx.beginPath(); ctx.arc(W / 2, GROUND_Y + 96, 54, 0, 6.3); ctx.stroke();
+    ctx.restore();
+  }
+
+  /* ---------- knight ---------- */
+  function rr(x, y, w, h, r) {
     ctx.beginPath();
     ctx.moveTo(x + r, y);
     ctx.arcTo(x + w, y, x + w, y + h, r);
@@ -582,6 +631,231 @@ window.Battle = (function () {
     ctx.arcTo(x, y + h, x, y, r);
     ctx.arcTo(x, y, x + w, y, r);
     ctx.closePath();
+  }
+  // legacy alias used nowhere else, kept for safety
+  function roundRect(x, y, w, h, r) { rr(x, y, w, h, r); }
+
+  function drawFighter(f) {
+    // ground shadow (world space)
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath(); ctx.ellipse(f.x, GROUND_Y + 8, 48, 12, 0, 0, 6.3); ctx.fill();
+    ctx.restore();
+
+    const P = f.pal;
+    const moving = Math.abs(f.vx) > 0.6 && f.onGround;
+    if (moving) f.step += 0.18 + Math.min(0.25, Math.abs(f.vx) * 0.03);
+    const bob = f.onGround ? Math.sin(animClock / 320 + f.bobPhase) * 2.0 : 0;
+    const hurt = f.hurt > 0 && (f.hurt % 4 < 2);
+    const tint = (base) => hurt ? '#ffffff' : base;
+
+    ctx.save();
+    ctx.translate(f.x, f.y);
+    ctx.scale(f.facing, 1);     // +x = forward
+    if (f.dead) ctx.globalAlpha = 0.4;
+    ctx.translate(0, bob);
+
+    // sway for cape
+    const sway = moving ? Math.abs(Math.sin(f.step)) * 8 : Math.sin(animClock / 500 + f.bobPhase) * 3;
+    const air = f.onGround ? 0 : 8;
+
+    // ----- cape (behind everything) -----
+    ctx.fillStyle = tint(P.capeD);
+    ctx.beginPath();
+    ctx.moveTo(-2, -124);
+    ctx.quadraticCurveTo(-32 - sway - air, -78, -24 - sway - air, -6);
+    ctx.lineTo(8 - sway * 0.3, -6);
+    ctx.quadraticCurveTo(10, -78, 14, -124);
+    ctx.closePath(); ctx.fill();
+
+    // ----- back-mounted shield (armor>=5) -----
+    if (f.build.armor >= 5) {
+      ctx.save(); ctx.translate(-16, -96);
+      ctx.fillStyle = tint(P.armorD); ctx.strokeStyle = OUT; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(0, -24); ctx.lineTo(20, -14); ctx.lineTo(20, 12); ctx.lineTo(0, 30); ctx.lineTo(-20, 12); ctx.lineTo(-20, -14); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = GOLD; ctx.beginPath(); ctx.arc(0, 2, 6, 0, 6.3); ctx.fill();
+      ctx.restore();
+    }
+
+    // ----- legs (back first, then front) -----
+    const sw = moving ? Math.sin(f.step) * 16 : 0;
+    drawLeg(-5, -sw, P, tint, true);
+    drawLeg(5, sw, P, tint, false);
+
+    // ----- torso (chest plate) -----
+    if (hurt) { ctx.fillStyle = '#ffffff'; }
+    else {
+      const chest = ctx.createLinearGradient(-24, -124, 24, -60);
+      chest.addColorStop(0, P.armorD); chest.addColorStop(0.5, P.armor); chest.addColorStop(1, P.armorL);
+      ctx.fillStyle = chest;
+    }
+    ctx.strokeStyle = OUT; ctx.lineWidth = 3;
+    rr(-25, -126, 50, 66, 11); ctx.fill(); ctx.stroke();
+    // central ridge + rivets
+    ctx.strokeStyle = 'rgba(255,255,255,0.16)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, -122); ctx.lineTo(0, -66); ctx.stroke();
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath(); ctx.arc(-15, -116, 2.5, 0, 6.3); ctx.arc(15, -116, 2.5, 0, 6.3); ctx.fill();
+    // belt
+    ctx.fillStyle = tint(P.armorD); ctx.fillRect(-25, -68, 50, 12);
+    ctx.fillStyle = GOLD; ctx.fillRect(-9, -69, 18, 13);
+    ctx.fillStyle = '#7a5e15'; ctx.fillRect(-9, -69, 18, 3);
+    // 능력치 gem (stat>=5)
+    if (f.build.stat >= 5) { ctx.fillStyle = '#79e0c8'; ctx.beginPath(); ctx.arc(0, -62, 4, 0, 6.3); ctx.fill(); }
+
+    // ----- pauldrons -----
+    ctx.strokeStyle = OUT; ctx.lineWidth = 2;
+    ctx.fillStyle = tint(P.armorL);
+    ctx.beginPath(); ctx.ellipse(-21, -120, 13, 11, 0, 0, 6.3); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(22, -120, 14, 12, 0, 0, 6.3); ctx.fill(); ctx.stroke();
+    if (f.build.armor >= 7) { ctx.fillStyle = GOLD; ctx.beginPath(); ctx.arc(22, -120, 5, 0, 6.3); ctx.arc(-21, -120, 4, 0, 6.3); ctx.fill(); }
+
+    // ----- head / helmet -----
+    drawHelmet(f, P, tint);
+
+    // ----- sword arm + blade (front) -----
+    drawSwordArm(f, P, tint);
+
+    // ----- shield bubble (skill 2) -----
+    if (f.shieldT > 0) {
+      ctx.strokeStyle = 'rgba(150,200,255,0.7)'; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(0, -72, 74, 0, 6.3); ctx.stroke();
+      ctx.fillStyle = 'rgba(150,200,255,0.10)'; ctx.beginPath(); ctx.arc(0, -72, 74, 0, 6.3); ctx.fill();
+    }
+    // ----- haste motion lines (skill 3) -----
+    if (f.hasteT > 0) {
+      ctx.strokeStyle = 'rgba(185,168,255,0.55)'; ctx.lineWidth = 3;
+      for (let i = 0; i < 3; i++) { const yy = -46 - i * 28; ctx.beginPath(); ctx.moveTo(-28, yy); ctx.lineTo(-62, yy); ctx.stroke(); }
+    }
+
+    ctx.restore();
+
+    // name tag (world space, never flipped)
+    ctx.save();
+    ctx.font = '700 22px Orbitron, sans-serif'; ctx.textAlign = 'center';
+    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,0.65)';
+    ctx.strokeText(f.name, f.x, f.y - bob - 172);
+    ctx.fillStyle = f.pal.accent;
+    ctx.fillText(f.name, f.x, f.y - bob - 172);
+    ctx.restore();
+  }
+
+  function drawLeg(xOff, swingDeg, P, tint, back) {
+    ctx.save();
+    ctx.translate(xOff, -60);
+    ctx.rotate(rad(swingDeg));
+    ctx.fillStyle = tint(back ? '#2a2530' : P.armorD);
+    ctx.strokeStyle = OUT; ctx.lineWidth = 2;
+    rr(-8, 0, 16, 50, 6); ctx.fill(); ctx.stroke();
+    // knee plate
+    ctx.fillStyle = tint(back ? '#3a3340' : P.armor);
+    rr(-9, 18, 18, 12, 4); ctx.fill(); ctx.stroke();
+    // boot
+    ctx.fillStyle = tint('#211c27');
+    rr(-10, 48, 24, 13, 4); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawHelmet(f, P, tint) {
+    // neck
+    ctx.fillStyle = tint(P.armorD); ctx.strokeStyle = OUT; ctx.lineWidth = 2;
+    rr(-8, -136, 16, 14, 3); ctx.fill(); ctx.stroke();
+    // plume crest (behind helmet)
+    ctx.fillStyle = tint(P.plume);
+    ctx.beginPath();
+    ctx.moveTo(2, -170);
+    ctx.quadraticCurveTo(-30, -176, -22, -150);
+    ctx.quadraticCurveTo(-12, -160, -2, -156);
+    ctx.closePath(); ctx.fill();
+    // helmet body
+    ctx.fillStyle = tint(P.armor);
+    rr(-17, -152, 34, 28, 7); ctx.fill(); ctx.stroke();
+    // dome top
+    ctx.fillStyle = tint(P.armorL);
+    ctx.beginPath(); ctx.arc(0, -152, 17, Math.PI, 0); ctx.fill();
+    ctx.strokeStyle = OUT; ctx.lineWidth = 2; ctx.stroke();
+    // visor slit
+    ctx.fillStyle = '#0c0a11'; rr(-15, -142, 31, 8, 3); ctx.fill();
+    // eye glint (subtle team accent)
+    ctx.fillStyle = f.pal.accent;
+    ctx.fillRect(3, -140, 9, 3);
+    // brow ridge
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(-15, -134); ctx.lineTo(16, -134); ctx.stroke();
+  }
+
+  function drawSwordArm(f, P, tint) {
+    const swordLen = 50 + f.build.sword * 7;
+    let arm = 18; // rest angle (deg), forward-down
+    if (f.atk) {
+      const p = clamp(f.atk.t / f.atk.dur, 0, 1);
+      if (p < 0.30) arm = lerp(18, -80, p / 0.30);
+      else if (p < 0.62) arm = lerp(-80, 72, (p - 0.30) / 0.32);
+      else arm = lerp(72, 18, (p - 0.62) / 0.38);
+    }
+
+    // slash trail during active frames
+    if (f.atk && f.atk.t >= f.atk.as && f.atk.t <= f.atk.ae) {
+      ctx.save(); ctx.translate(16, -116);
+      ctx.strokeStyle = f.atk.kind === 'skill' ? 'rgba(255,214,130,0.55)'
+        : f.atk.kind === 'strong' ? 'rgba(255,180,150,0.5)' : 'rgba(255,255,255,0.4)';
+      ctx.lineWidth = 11; ctx.lineCap = 'round';
+      const r = 46 + swordLen * 0.7;
+      ctx.beginPath(); ctx.arc(0, 0, r, rad(arm - 58), rad(arm + 14)); ctx.stroke();
+      ctx.restore();
+    }
+
+    ctx.save();
+    ctx.translate(16, -116);     // front shoulder
+    ctx.rotate(rad(arm));
+    ctx.strokeStyle = OUT;
+
+    // upper arm
+    ctx.fillStyle = tint(P.armor); ctx.lineWidth = 2;
+    rr(0, -7, 30, 14, 6); ctx.fill(); ctx.stroke();
+    // gauntlet/hand
+    ctx.fillStyle = tint(P.armorL);
+    ctx.beginPath(); ctx.arc(32, 0, 8, 0, 6.3); ctx.fill(); ctx.stroke();
+
+    // grip
+    ctx.fillStyle = '#3a2a1a'; ctx.fillRect(32, -4, 14, 8);
+    // crossguard
+    ctx.fillStyle = GOLD; rr(44, -16, 7, 32, 2); ctx.fill();
+    // pommel
+    ctx.fillStyle = GOLD; ctx.beginPath(); ctx.arc(30, 0, 5, 0, 6.3); ctx.fill();
+
+    // blade
+    const grd = ctx.createLinearGradient(0, -5, 0, 5);
+    grd.addColorStop(0, f.build.sword >= 5 ? '#eef3fb' : METAL);
+    grd.addColorStop(0.5, METAL);
+    grd.addColorStop(1, METAL_D);
+    ctx.fillStyle = grd; ctx.strokeStyle = OUT; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(51, -5);
+    ctx.lineTo(51 + swordLen, -3);
+    ctx.lineTo(51 + swordLen + 12, 0);  // point
+    ctx.lineTo(51 + swordLen, 3);
+    ctx.lineTo(51, 5);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    // fuller line
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(53, 0); ctx.lineTo(51 + swordLen, 0); ctx.stroke();
+    // gold edge for high-level swords
+    if (f.build.sword >= 7) {
+      ctx.strokeStyle = 'rgba(201,162,39,0.85)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(51, -5); ctx.lineTo(51 + swordLen, -3); ctx.lineTo(51 + swordLen + 12, 0); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawParticles() {
+    particles.forEach((p) => {
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+    });
+    ctx.globalAlpha = 1;
   }
 
   return { start, stop, handleNetData };
