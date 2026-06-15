@@ -19,6 +19,7 @@ window.UI = (function () {
     const el = document.getElementById('screen-' + name);
     if (el) el.classList.add('active');
     current = name;
+    document.body.setAttribute('data-screen', name);
   }
   function currentScreen() { return current; }
 

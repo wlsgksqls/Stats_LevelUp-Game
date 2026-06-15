@@ -345,10 +345,62 @@
     }
   }
 
+  /* ---------------- MOBILE TOUCH CONTROLS ---------------- */
+  function setupTouch() {
+    const forceTouch = /[?&]touch=1/.test(location.search);
+    const isMobile = forceTouch || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+    if (!isMobile) return;
+    document.body.classList.add('touch');
+
+    // strong attack
+    const strong = $('#mstrong');
+    strong.addEventListener('touchstart', (e) => { e.preventDefault(); Battle.input.attack('strong'); }, { passive: false });
+    strong.addEventListener('click', () => Battle.input.attack('strong'));
+
+    // skill buttons (press = fire)
+    document.querySelectorAll('.mskill').forEach((el) => {
+      const idx = +el.dataset.skill;
+      el.addEventListener('touchstart', (e) => { e.preventDefault(); Battle.input.skill(idx); }, { passive: false });
+      el.addEventListener('click', () => Battle.input.skill(idx));
+    });
+
+    // virtual joystick: left/right = move, push up = jump
+    const joy = $('#mjoy'), knob = $('#mjoy-knob');
+    let joyId = null, joyUp = false;
+    const place = (t) => {
+      const r = joy.getBoundingClientRect();
+      const cx = r.left + r.width / 2, cy = r.top + r.height / 2, R = r.width / 2;
+      let dx = t.clientX - cx, dy = t.clientY - cy;
+      const d = Math.hypot(dx, dy), max = R * 0.7;
+      if (d > max) { dx = dx / d * max; dy = dy / d * max; }
+      knob.style.transform = `translate(${dx}px, ${dy}px)`;
+      const hx = dx / R, vy = dy / R;
+      Battle.input.move(Math.abs(hx) > 0.3 ? Math.sign(hx) : 0);
+      if (vy < -0.5) { if (!joyUp) { joyUp = true; Battle.input.jump(); } }
+      else if (vy > -0.3) { joyUp = false; }
+    };
+    joy.addEventListener('touchstart', (e) => {
+      const t = e.changedTouches[0]; joyId = t.identifier; place(t); e.preventDefault();
+    }, { passive: false });
+    window.addEventListener('touchmove', (e) => {
+      if (joyId === null) return;
+      for (const t of e.changedTouches) if (t.identifier === joyId) { place(t); e.preventDefault(); break; }
+    }, { passive: false });
+    const endTouch = (e) => {
+      if (joyId === null) return;
+      for (const t of e.changedTouches) if (t.identifier === joyId) {
+        joyId = null; joyUp = false; knob.style.transform = 'translate(0,0)'; Battle.input.move(0); break;
+      }
+    };
+    window.addEventListener('touchend', endTouch);
+    window.addEventListener('touchcancel', endTouch);
+  }
+
   /* ---------------- WIRE UP ---------------- */
   function wire() {
     UI.init();
     Enhance.init({ onDone: enhanceDone });
+    setupTouch();
 
     $('#btn-create-room').addEventListener('click', createRoom);
     $('#btn-join-room').addEventListener('click', openJoin);

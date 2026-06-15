@@ -199,6 +199,22 @@
     </div>
   </div>
 
+  <!-- mobile touch controls (viewport-fixed; shown only on touch devices during battle) -->
+  <div id="mobile-controls" class="mobile-controls">
+    <div id="mjoy" class="mjoy"><div id="mjoy-knob" class="mjoy-knob"></div></div>
+    <div class="mobile-right">
+      <div class="mobile-skills">
+        <div class="skill-slot mskill" data-skill="0"><span class="skill-key">1</span><span class="skill-icon">⚔️</span><span class="skill-lock">🔒</span><div class="skill-cd-overlay"></div></div>
+        <div class="skill-slot mskill" data-skill="1"><span class="skill-key">2</span><span class="skill-icon">🛡️</span><span class="skill-lock">🔒</span><div class="skill-cd-overlay"></div></div>
+        <div class="skill-slot mskill" data-skill="2"><span class="skill-key">3</span><span class="skill-icon">✨</span><span class="skill-lock">🔒</span><div class="skill-cd-overlay"></div></div>
+      </div>
+      <button id="mstrong" class="mstrong">강공</button>
+    </div>
+  </div>
+
+  <!-- portrait nudge (mobile, during battle only) -->
+  <div id="rotate-hint"><div class="rotate-emoji">🔄</div><div>가로 모드로 플레이하세요</div></div>
+
   <!-- PeerJS for real P2P (vendored locally so it works without a CDN;
        game degrades to AI practice if it ever fails to load) -->
   <script src="vendor/peerjs.min.js"></script>
