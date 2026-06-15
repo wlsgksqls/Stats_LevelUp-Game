@@ -251,6 +251,11 @@ window.Battle = (function () {
       opp.tx = msg.x; opp.ty = msg.y; opp.vx = msg.vx; opp.facing = msg.facing;
       opp.hp = msg.hp; opp.shieldT = msg.shield ? 1 : 0; opp.hasteT = msg.haste ? 1 : 0;
       opp.onGround = msg.g;
+      // the host owns the match clock; the guest adopts it so both timers match
+      if (!st.isHost && msg.tl != null) {
+        timeLeft = msg.tl;
+        if (msg.ot) enterOvertime();
+      }
     } else if (msg.t === 'a') {
       opp.atk = { kind: msg.kind, t: 0, dur: msg.kind === 'strong' ? 34 : msg.kind === 'skill' ? 40 : 18,
                   as: 99, ae: 99, reach: msg.reach, hh: msg.hh, dmg: 0, kb: 0, hit: true };
@@ -478,8 +483,11 @@ window.Battle = (function () {
     stepParticles();
 
     if (!overtime) {
-      timeLeft -= ms / 1000;
-      if (timeLeft <= 0) { timeLeft = 0; overtime = true; $('#overtime-badge').classList.remove('hidden'); }
+      // host (and local/practice) own the clock; the guest's timeLeft is set by host sync
+      if (!netMode || st.isHost) {
+        timeLeft -= ms / 1000;
+        if (timeLeft <= 0) { timeLeft = 0; enterOvertime(); }
+      }
     } else {
       otAcc += ms;
       if (otAcc >= C.OVERTIME_TICK_INTERVAL) {
@@ -495,7 +503,9 @@ window.Battle = (function () {
       netAcc += ms;
       if (netAcc >= 22) {   // ~45Hz state sync for snappier remote motion
         netAcc = 0;
-        Net.send({ t: 's', x: me.x, y: me.y, vx: me.vx, facing: me.facing, hp: me.hp, g: me.onGround, shield: me.shieldT > 0, haste: me.hasteT > 0 });
+        const s = { t: 's', x: me.x, y: me.y, vx: me.vx, facing: me.facing, hp: me.hp, g: me.onGround, shield: me.shieldT > 0, haste: me.hasteT > 0 };
+        if (st.isHost) { s.tl = timeLeft; s.ot = overtime; }   // host streams the match clock
+        Net.send(s);
       }
     }
 
@@ -512,6 +522,12 @@ window.Battle = (function () {
     }
 
     updateHud();
+  }
+
+  function enterOvertime() {
+    if (overtime) return;
+    overtime = true;
+    $('#overtime-badge').classList.remove('hidden');
   }
 
   function finish(result) {
