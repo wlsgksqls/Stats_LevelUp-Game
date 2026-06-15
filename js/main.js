@@ -177,7 +177,7 @@
   function goBattle() {
     UI.loading('전투 시작!', 1600).then(() => {
       UI.show('battle');
-      Battle.start({ mode: st.mode, onEnd: showResult });
+      Battle.start({ mode: st.mode, onEnd: showResult, onQuit: exitToLobby });
     });
   }
 

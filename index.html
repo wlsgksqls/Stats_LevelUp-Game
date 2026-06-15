@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FORGE &amp; FIGHT — 강화 1vs1 액션</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ctext y='52' font-size='52'%3E%E2%9A%94%EF%B8%8F%3C/text%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="css/styles.css?v=1.5.0" />
+  <link rel="stylesheet" href="css/styles.css?v=1.6.0" />
 </head>
 <body>
   <!-- 16:9 stage scaled to fit the viewport -->
@@ -128,15 +128,16 @@
 
         <div class="battle-hud-bottom">
           <div class="hud-group">
-            <div class="hud-keys">
-              <span class="key">W</span>
-              <div class="key-row"><span class="key">A</span><span class="key">S</span><span class="key">D</span></div>
-            </div>
+            <div class="key-row"><span class="key">A</span><span class="key">D</span></div>
             <span class="hud-caption">이동</span>
           </div>
           <div class="hud-group">
             <span class="key key-wide">SPACE</span>
             <span class="hud-caption">점프</span>
+          </div>
+          <div class="hud-group">
+            <span class="key">S</span>
+            <span class="hud-caption">빠른 낙하</span>
           </div>
           <div class="hud-group">
             <span class="key key-mouse">L</span>
@@ -220,12 +221,12 @@
   <script src="vendor/peerjs.min.js"></script>
 
   <!-- game source (classic scripts, loaded in dependency order; ?v cache-busts on each release) -->
-  <script src="js/config.js?v=1.5.0"></script>
-  <script src="js/state.js?v=1.5.0"></script>
-  <script src="js/ui.js?v=1.5.0"></script>
-  <script src="js/net.js?v=1.5.0"></script>
-  <script src="js/enhance.js?v=1.5.0"></script>
-  <script src="js/battle.js?v=1.5.0"></script>
-  <script src="js/main.js?v=1.5.0"></script>
+  <script src="js/config.js?v=1.6.0"></script>
+  <script src="js/state.js?v=1.6.0"></script>
+  <script src="js/ui.js?v=1.6.0"></script>
+  <script src="js/net.js?v=1.6.0"></script>
+  <script src="js/enhance.js?v=1.6.0"></script>
+  <script src="js/battle.js?v=1.6.0"></script>
+  <script src="js/main.js?v=1.6.0"></script>
 </body>
 </html>
