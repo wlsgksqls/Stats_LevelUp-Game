@@ -116,8 +116,12 @@ window.Battle = (function () {
     $('#overtime-badge').classList.add('hidden');
 
     phase = 'countdown'; countdownT = 3.0; lastCount = null; animClock = 0;
+    keys['a'] = keys['d'] = keys['s'] = false;   // clear any held input
     if (!stars) stars = makeStars();
     showCountdown();
+    if (document.body.classList.contains('touch')) {
+      UI.toast('좌측 조이스틱: 이동·위로 점프 · 화면 탭: 기본공격 · 우측: 강공/스킬', 4000);
+    }
 
     updateHud();
     lastTs = performance.now(); acc = 0;
@@ -148,6 +152,12 @@ window.Battle = (function () {
       else if (e.button === 2) attack(me, 'strong');
     });
     cv.addEventListener('contextmenu', (e) => e.preventDefault());
+    // touch: tapping the play area = basic attack (preventDefault blocks synthetic mouse)
+    cv.addEventListener('touchstart', (e) => {
+      if (UI.currentScreen() !== 'battle' || !running) return;
+      e.preventDefault();
+      attack(me, 'basic');
+    }, { passive: false });
   }
 
   /* ---------- actions (blocked during countdown) ---------- */
@@ -486,12 +496,14 @@ window.Battle = (function () {
   function hideCountdown() { $('#battle-countdown').classList.add('hidden'); }
 
   /* ---------- HUD ---------- */
+  function eachSkill(i, fn) {
+    document.querySelectorAll('.skill-slot[data-skill="' + i + '"]').forEach(fn);
+  }
   function setupSkillHud() {
     const myStats = me.stats;
-    ['#skill-1', '#skill-2', '#skill-3'].forEach((sel, i) => {
-      const el = $(sel);
+    for (let i = 0; i < 3; i++) eachSkill(i, (el) => {
       el.classList.toggle('unlocked', myStats.skills[i]);
-      el.querySelector('.skill-cd-overlay').style.height = '0%';
+      const ov = el.querySelector('.skill-cd-overlay'); if (ov) ov.style.height = '0%';
     });
   }
   function updateHud() {
@@ -509,13 +521,14 @@ window.Battle = (function () {
     t.textContent = mm + ':' + String(ssn).padStart(2, '0');
     t.classList.toggle('urgent', timeLeft <= 10 && !overtime);
 
-    ['#skill-1', '#skill-2', '#skill-3'].forEach((sel, i) => {
-      const el = $(sel);
+    for (let i = 0; i < 3; i++) {
       const ready = me.stats.skills[i] && me.skillCd[i] <= 0;
-      el.classList.toggle('ready', ready);
-      const ov = el.querySelector('.skill-cd-overlay');
-      ov.style.height = me.stats.skills[i] ? (me.skillCd[i] / C.SKILL_COOLDOWNS[i] * 100) + '%' : '0%';
-    });
+      const h = me.stats.skills[i] ? (me.skillCd[i] / C.SKILL_COOLDOWNS[i] * 100) + '%' : '0%';
+      eachSkill(i, (el) => {
+        el.classList.toggle('ready', ready);
+        const ov = el.querySelector('.skill-cd-overlay'); if (ov) ov.style.height = h;
+      });
+    }
   }
 
   /* ============================================================
@@ -942,5 +955,14 @@ window.Battle = (function () {
     ctx.globalAlpha = 1;
   }
 
-  return { start, stop, handleNetData };
+  return {
+    start, stop, handleNetData,
+    // input API for on-screen (mobile) controls
+    input: {
+      move(d) { keys['a'] = d < 0; keys['d'] = d > 0; },
+      jump() { jump(me); },
+      attack(kind) { attack(me, kind); },
+      skill(i) { useSkill(me, i); },
+    },
+  };
 })();
