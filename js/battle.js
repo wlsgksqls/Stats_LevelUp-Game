@@ -165,12 +165,24 @@ window.Battle = (function () {
   }
 
   /* ---------- input ---------- */
+  // Map a key event to the game's logical key. Prefer the physical position
+  // (e.KeyboardEvent.code) so that a Korean/other-layout IME — which makes
+  // e.key report '국' / 'ㅁ' instead of 'a' — still drives movement.
+  const CODE_TO_KEY = {
+    KeyA: 'a', KeyD: 'd', KeyS: 's', KeyW: 'w',
+    Space: ' ', Escape: 'escape',
+    Digit1: '1', Digit2: '2', Digit3: '3',
+    Numpad1: '1', Numpad2: '2', Numpad3: '3',
+  };
+  function normKey(e) {
+    return CODE_TO_KEY[e.code] || (e.key || '').toLowerCase();
+  }
   function bindInput() {
     if (inputBound) return;
     inputBound = true;
     window.addEventListener('keydown', (e) => {
       if (UI.currentScreen() !== 'battle') return;
-      const k = e.key.toLowerCase();
+      const k = normKey(e);
       if (k === 'escape') { e.preventDefault(); togglePause(); return; }
       if (paused) return;                         // pause menu open: ignore gameplay keys
       keys[k] = true;
@@ -179,7 +191,7 @@ window.Battle = (function () {
       if (k === '2') useSkill(me, 1);
       if (k === '3') useSkill(me, 2);
     });
-    window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+    window.addEventListener('keyup', (e) => { keys[normKey(e)] = false; });
     const cv = document.getElementById('battle-canvas');
     cv.addEventListener('mousedown', (e) => {
       if (UI.currentScreen() !== 'battle' || !running) return;
