@@ -47,10 +47,18 @@ window.Battle = (function () {
   let particles = [];
   let netAcc = 0;
 
-  let phase = 'fighting';     // 'countdown' | 'fighting'
+  let phase = 'fighting';     // 'countdown' | 'fighting' | 'dying'
   let countdownT = 0, lastCount = null;
   let animClock = 0;
   let stars = null;
+
+  /* death sequence — the loser collapses to the ground, then (after a short
+     hold) main.js raises the win/lose panel from the bottom of the screen. */
+  const FALL_MS = 720;                        // topple onto the back
+  const SETTLE_MS = 320;                      // rebound + settle on impact
+  const DEATH_MOTION = FALL_MS + SETTLE_MS;   // full collapse animation length
+  const RESULT_HOLD = 1000;                   // ~1s pause after the motion ends
+  let dying = false, deathClock = 0, pendingResult = null;
 
   const keys = Object.create(null);
   let inputBound = false;
@@ -74,7 +82,7 @@ window.Battle = (function () {
       skillCd: [0, 0, 0],
       atk: null,
       shieldT: 0, hasteT: 0, regenAcc: 0,
-      hurt: 0, dead: false,
+      hurt: 0, dead: false, collapse: null,
       onPlatform: false, dropTimer: 0, coyote: 0,
       tx: null, ty: null,   // remote interpolation targets (P2P)
       step: 0, bobPhase: Math.random() * Math.PI * 2,
@@ -115,6 +123,7 @@ window.Battle = (function () {
 
     timeLeft = C.TIMER_SECONDS; overtime = false; otAcc = 0;
     particles = []; ended = false; running = true;
+    dying = false; deathClock = 0; pendingResult = null;
     $('#overtime-badge').classList.add('hidden');
 
     phase = 'countdown'; countdownT = 3.0; lastCount = null; animClock = 0;
@@ -134,7 +143,7 @@ window.Battle = (function () {
 
   /* ---------- pause menu (ESC) ---------- */
   function togglePause() {
-    if (!running || ended) return;
+    if (!running || ended || dying) return;
     if (paused) resumeGame();
     else openPauseMenu();
   }
@@ -184,7 +193,7 @@ window.Battle = (function () {
       if (UI.currentScreen() !== 'battle') return;
       const k = normKey(e);
       if (k === 'escape') { e.preventDefault(); togglePause(); return; }
-      if (paused) return;                         // pause menu open: ignore gameplay keys
+      if (paused || dying) return;                // pause menu / death cutscene: ignore gameplay keys
       keys[k] = true;
       if (k === ' ') { e.preventDefault(); jump(me); }   // jump = Spacebar only
       if (k === '1') useSkill(me, 0);
@@ -454,6 +463,23 @@ window.Battle = (function () {
       particles.push({ x: f.x, y: f.y - f.h * 0.5, vx: Math.cos(ang) * 4, vy: Math.sin(ang) * 4, life: 1, decay: 0.05, color: '#cfe2ff', size: 3 });
     }
   }
+  const DUST = ['#6b5d4a', '#897a63', '#574b3c', '#9a8b72'];
+  function spawnDust(f) {
+    const gy = (f.onGround ? f.y : GROUND_Y);
+    for (let i = 0; i < 26; i++) {
+      const ang = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI;   // upward fan
+      const sp = 2 + Math.random() * 6;
+      particles.push({
+        x: f.x - f.facing * (16 + Math.random() * 64),              // behind the falling body
+        y: gy - 4 - Math.random() * 8,
+        vx: Math.cos(ang) * sp + (Math.random() - 0.5) * 3,
+        vy: Math.sin(ang) * sp,
+        life: 1, decay: 0.02 + Math.random() * 0.02,
+        color: DUST[(Math.random() * DUST.length) | 0],
+        size: 3 + Math.random() * 5, grav: 0.12,
+      });
+    }
+  }
   function stepParticles() {
     for (let i = particles.length - 1; i >= 0; i--) {
       const p = particles[i];
@@ -477,6 +503,8 @@ window.Battle = (function () {
 
   function update(ms) {
     if (ended) return;
+
+    if (phase === 'dying') { stepDeath(ms); return; }
 
     if (phase === 'countdown') {
       countdownT -= ms / 1000;
@@ -542,12 +570,51 @@ window.Battle = (function () {
     $('#overtime-badge').classList.remove('hidden');
   }
 
+  /* Begin the end-of-match sequence: the loser plays a collapse motion, the
+     survivor keeps standing, and only afterwards does the result panel rise. */
   function finish(result) {
-    if (ended) return;
-    ended = true; running = false;
-    cancelAnimationFrame(rafId);
+    if (ended || dying) return;
+    dying = true;
+    phase = 'dying';
+    deathClock = 0;
+    pendingResult = result;
     st.lastResult = result;
-    setTimeout(() => onEnd && onEnd(result), 700);
+    keys['a'] = keys['d'] = keys['s'] = false;   // drop any held input
+    const losers = result === 'draw' ? [p1, p2] : result === 'win' ? [opp] : [me];
+    losers.forEach(startCollapse);
+  }
+
+  function startCollapse(f) {
+    if (!f || f.collapse) return;
+    f.dead = true;
+    f.atk = null;
+    f.shieldT = 0; f.hasteT = 0;
+    f.vx = 0; f.vy = 0;
+    f.collapse = { t: 0, dust: false };
+  }
+
+  function stepDeath(ms) {
+    deathClock += ms;
+    if (p1.collapse) p1.collapse.t += ms;
+    if (p2.collapse) p2.collapse.t += ms;
+    // survivor still obeys gravity (so a mid-air winner lands) but takes no input/combat
+    [p1, p2].forEach((f) => { if (!f.collapse) physics(f); });
+    // kick up dust the moment the body slams into the ground
+    [p1, p2].forEach((f) => {
+      if (f.collapse && !f.collapse.dust && f.collapse.t >= FALL_MS * 0.82) {
+        f.collapse.dust = true; spawnDust(f);
+      }
+    });
+    stepParticles();
+    updateHud();
+    if (deathClock >= DEATH_MOTION + RESULT_HOLD) emitResult();
+  }
+
+  function emitResult() {
+    if (ended) return;
+    ended = true; running = false; dying = false;
+    cancelAnimationFrame(rafId);
+    onEnd && onEnd(pendingResult);
   }
 
   /* ---------- countdown DOM ---------- */
@@ -816,11 +883,36 @@ window.Battle = (function () {
     const hurt = f.hurt > 0 && (f.hurt % 4 < 2);
     const tint = (base) => hurt ? '#ffffff' : base;
 
+    // collapse motion (loser only): topple backward onto the back, with an
+    // initial knee-buckle, a small settle bounce, and a late fade.
+    let col = null;
+    if (f.collapse) {
+      const t = f.collapse.t;
+      const fall = clamp(t / FALL_MS, 0, 1);
+      const eased = fall * fall;                                 // accelerate into the ground
+      let settle = 0;
+      if (t > FALL_MS) {
+        const s = clamp((t - FALL_MS) / SETTLE_MS, 0, 1);
+        settle = Math.sin(s * Math.PI) * (1 - s) * 0.16;         // damped rebound
+      }
+      const angle = -(eased * (Math.PI / 2 - 0.05)) + settle;    // → ~ -87° (lying back)
+      const buckle = Math.sin(clamp(t / 200, 0, 1) * (Math.PI / 2)) * 10 * (1 - fall * 0.6);
+      const fade = clamp((t - DEATH_MOTION) / 500, 0, 1);
+      col = { t, fall, angle, buckle, fade };
+    }
+
     ctx.save();
     ctx.translate(f.x, f.y);
     ctx.scale(f.facing, 1);     // +x = forward
-    if (f.dead) ctx.globalAlpha = 0.4;
-    ctx.translate(0, bob);
+    ctx.translate(0, col ? 0 : bob);
+    if (col) {
+      ctx.globalAlpha = 1 - col.fade * 0.45;     // settle toward ~0.55, never fully gone
+      const pivotY = -8;                         // topple about the ankles
+      ctx.translate(0, pivotY); ctx.rotate(col.angle); ctx.translate(0, -pivotY);
+      ctx.translate(0, col.buckle);              // knees give → body sinks slightly
+    } else if (f.dead) {
+      ctx.globalAlpha = 0.4;
+    }
 
     // sway for cape
     const sway = moving ? Math.abs(Math.sin(f.step)) * 8 : Math.sin(animClock / 500 + f.bobPhase) * 3;
@@ -847,8 +939,13 @@ window.Battle = (function () {
 
     // ----- legs (back first, then front) -----
     const sw = moving ? Math.sin(f.step) * 16 : 0;
-    drawLeg(-5, -sw, P, tint, true);
-    drawLeg(5, sw, P, tint, false);
+    let legBack = -sw, legFront = sw;
+    if (col) {                                   // legs splay/fold as the knight goes down
+      legBack = lerp(-sw, -30, col.fall);
+      legFront = lerp(sw, 22, col.fall);
+    }
+    drawLeg(-5, legBack, P, tint, true);
+    drawLeg(5, legFront, P, tint, false);
 
     // ----- torso (chest plate) -----
     if (hurt) { ctx.fillStyle = '#ffffff'; }
@@ -878,8 +975,15 @@ window.Battle = (function () {
     ctx.beginPath(); ctx.ellipse(22, -120, 14, 12, 0, 0, 6.3); ctx.fill(); ctx.stroke();
     if (f.build.armor >= 7) { ctx.fillStyle = GOLD; ctx.beginPath(); ctx.arc(22, -120, 5, 0, 6.3); ctx.arc(-21, -120, 4, 0, 6.3); ctx.fill(); }
 
-    // ----- head / helmet -----
-    drawHelmet(f, P, tint);
+    // ----- head / helmet (lolls back as the knight falls) -----
+    if (col) {
+      ctx.save();
+      ctx.translate(0, -128); ctx.rotate(rad(lerp(0, 22, col.fall))); ctx.translate(0, 128);
+      drawHelmet(f, P, tint);
+      ctx.restore();
+    } else {
+      drawHelmet(f, P, tint);
+    }
 
     // ----- sword arm + blade (front) -----
     drawSwordArm(f, P, tint);
@@ -955,7 +1059,10 @@ window.Battle = (function () {
   function drawSwordArm(f, P, tint) {
     const swordLen = 50 + f.build.sword * 7;
     let arm = 18; // rest angle (deg), forward-down
-    if (f.atk) {
+    if (f.collapse) {
+      // arm goes limp and the blade swings down toward the ground
+      arm = lerp(18, 122, clamp(f.collapse.t / FALL_MS, 0, 1));
+    } else if (f.atk) {
       const p = clamp(f.atk.t / f.atk.dur, 0, 1);
       if (p < 0.30) arm = lerp(18, -80, p / 0.30);
       else if (p < 0.62) arm = lerp(-80, 72, (p - 0.30) / 0.32);

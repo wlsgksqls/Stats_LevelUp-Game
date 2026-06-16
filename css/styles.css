@@ -413,6 +413,20 @@ html, body {
 .result-notice { font-size:20px; color:var(--steel-l); min-height:28px; letter-spacing:1px; }
 .result-notice.warn { color:var(--ember-l); }
 
+/* the win/lose panel rises up from the bottom of the screen */
+#screen-result.active .result-card { animation:resultRise 0.72s cubic-bezier(.18,.9,.24,1) both; }
+@keyframes resultRise {
+  0%   { transform:translateY(105vh) scale(0.94); opacity:0; }
+  55%  { opacity:1; }
+  100% { transform:translateY(0) scale(1); opacity:1; }
+}
+#screen-result.active .result-title { animation:resultTitlePop 0.46s ease 0.42s both; }
+@keyframes resultTitlePop {
+  0%   { transform:scale(0.7); opacity:0; }
+  70%  { transform:scale(1.08); opacity:1; }
+  100% { transform:scale(1); opacity:1; }
+}
+
 /* ============ OVERLAYS ============ */
 .overlay { position:absolute; inset:0; z-index:50; display:flex; align-items:center; justify-content:center; background:rgba(4,3,8,0.74); backdrop-filter:blur(3px); }
 .overlay.hidden { display:none; }
