@@ -16,6 +16,7 @@ window.State = (function () {
     myId: 'p1',            // 'p1' (host) or 'p2' (guest)
     stageIndex: 0,         // 0 sword -> 1 armor -> 2 stat
     stageAttempts: C.ATTEMPTS_PER_STAGE, // remaining attempts for the CURRENT stage
+    attemptsByStage: C.CATEGORIES.map(() => C.ATTEMPTS_PER_STAGE), // remaining per stage (so you can return to a stage that still has attempts)
     build: freshBuild(),
     opponentName: '상대',
     opponentReady: false,
@@ -43,6 +44,7 @@ window.State = (function () {
   function resetForRematch() {
     state.stageIndex = 0;
     state.stageAttempts = C.ATTEMPTS_PER_STAGE;
+    state.attemptsByStage = C.CATEGORIES.map(() => C.ATTEMPTS_PER_STAGE);
     state.build = freshBuild();
     state.opponentBuild = null;
     state.opponentReady = false;

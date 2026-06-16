@@ -228,6 +228,7 @@ window.Enhance = (function () {
     if (lv >= C.MAX_LEVEL) { UI.toast('이미 최대 강화입니다.'); return; }
 
     st.stageAttempts--;
+    st.attemptsByStage[st.stageIndex] = st.stageAttempts;
     refreshAttempts();
 
     const odds = oddsFor(lv);
@@ -274,8 +275,9 @@ window.Enhance = (function () {
   /* ---------- stage advancing / done ---------- */
   function nextStage() {
     if (st.stageIndex < order.length - 1) {
+      st.attemptsByStage[st.stageIndex] = st.stageAttempts;   // keep this stage's leftovers
       st.stageIndex++;
-      st.stageAttempts = C.ATTEMPTS_PER_STAGE;
+      st.stageAttempts = st.attemptsByStage[st.stageIndex];   // resume (full for an unvisited stage)
       refreshStage();
       const cat = C.CATEGORIES[st.stageIndex];
       UI.toast(`▶ ${cat.name} 강화 단계 시작`);
@@ -284,13 +286,40 @@ window.Enhance = (function () {
     }
   }
 
+  /* go back to the previous stage — only allowed while it still has attempts left */
+  function prevStage() {
+    if (advancing || st.iAmReady) return;
+    if (st.stageIndex <= 0) return;
+    const prevIdx = st.stageIndex - 1;
+    if (st.attemptsByStage[prevIdx] <= 0) { UI.toast('이전 단계는 남은 강화 횟수가 없습니다.'); return; }
+    st.attemptsByStage[st.stageIndex] = st.stageAttempts;   // keep current stage's leftovers
+    st.stageIndex = prevIdx;
+    st.stageAttempts = st.attemptsByStage[prevIdx];
+    refreshStage();
+    const cat = C.CATEGORIES[st.stageIndex];
+    UI.toast(`◀ ${cat.name} 강화 단계로 돌아왔습니다`);
+  }
+
   function finishAll() {
     $('#btn-stage-next').disabled = true;
     onDone && onDone();
   }
 
+  /* show the "previous stage" button only when the earlier stage still has
+     attempts left (and we haven't already locked in our build over P2P) */
+  function refreshNavButtons() {
+    const prevBtn = $('#btn-stage-prev');
+    if (!prevBtn) return;
+    const idx = st.stageIndex;
+    const list = st.attemptsByStage || [];
+    const canBack = idx > 0 && (list[idx - 1] || 0) > 0 && !st.iAmReady;
+    prevBtn.classList.toggle('invisible', !canBack);
+    prevBtn.disabled = !canBack;
+  }
+
   /* ---------- readiness (P2P) ---------- */
   function refreshReadyHint() {
+    refreshNavButtons();
     const status = $('#enhance-ready-status');
     if (st.mode === 'practice') {
       status.textContent = '각 부위를 30회씩 강화한 뒤 전투를 시작하세요.';
@@ -307,7 +336,8 @@ window.Enhance = (function () {
   function enter() {
     if (!built) { buildGrid(); buildStageIndicator(); }
     st.stageIndex = 0;
-    st.stageAttempts = C.ATTEMPTS_PER_STAGE;
+    st.attemptsByStage = order.map(() => C.ATTEMPTS_PER_STAGE);
+    st.stageAttempts = st.attemptsByStage[0];
     advancing = false;
     refreshStage();
   }
@@ -320,6 +350,7 @@ window.Enhance = (function () {
   function init(opts) {
     onDone = opts.onDone;
     $('#btn-stage-next').addEventListener('click', () => { if (!advancing) nextStage(); });
+    $('#btn-stage-prev').addEventListener('click', () => { if (!advancing) prevStage(); });
   }
 
   return { init, enter, refreshReadyHint, setOpponentReady };
