@@ -58,7 +58,7 @@ window.Battle = (function () {
   const SETTLE_MS = 320;                      // rebound + settle on impact
   const DEATH_MOTION = FALL_MS + SETTLE_MS;   // full collapse animation length
   const RESULT_HOLD = 1000;                   // ~1s pause after the motion ends
-  let dying = false, deathClock = 0, pendingResult = null;
+  let dying = false, deathClock = 0, groundClock = 0, pendingResult = null;
 
   const keys = Object.create(null);
   let inputBound = false;
@@ -123,7 +123,7 @@ window.Battle = (function () {
 
     timeLeft = C.TIMER_SECONDS; overtime = false; otAcc = 0;
     particles = []; ended = false; running = true;
-    dying = false; deathClock = 0; pendingResult = null;
+    dying = false; deathClock = 0; groundClock = 0; pendingResult = null;
     $('#overtime-badge').classList.add('hidden');
 
     phase = 'countdown'; countdownT = 3.0; lastCount = null; animClock = 0;
@@ -576,7 +576,7 @@ window.Battle = (function () {
     if (ended || dying) return;
     dying = true;
     phase = 'dying';
-    deathClock = 0;
+    deathClock = 0; groundClock = 0;
     pendingResult = result;
     st.lastResult = result;
     keys['a'] = keys['d'] = keys['s'] = false;   // drop any held input
@@ -589,25 +589,51 @@ window.Battle = (function () {
     f.dead = true;
     f.atk = null;
     f.shieldT = 0; f.hasteT = 0;
-    f.vx = 0; f.vy = 0;
-    f.collapse = { t: 0, dust: false };
+    // a body that dies in the air keeps falling under gravity; a grounded one
+    // tops over in place. `landed` decides which phase the draw/sim use.
+    f.vx *= 0.3;
+    if (f.onGround) f.vy = 0;
+    f.collapse = { t: 0, airT: 0, landed: !!f.onGround, dust: false };
+  }
+
+  // gravity-only fall for a dead body until it reaches the floor (ignores
+  // one-way platforms — a corpse crashes all the way down to the ground).
+  function fallStep(f) {
+    f.vy = Math.min(MAXFALL, f.vy + GRAVITY);
+    f.y += f.vy;
+    f.x += f.vx; f.vx *= 0.985;
+    f.x = Math.max(70, Math.min(W - 70, f.x));
+    if (f.y >= GROUND_Y) { f.y = GROUND_Y; return true; }
+    return false;
   }
 
   function stepDeath(ms) {
     deathClock += ms;
-    if (p1.collapse) p1.collapse.t += ms;
-    if (p2.collapse) p2.collapse.t += ms;
-    // survivor still obeys gravity (so a mid-air winner lands) but takes no input/combat
-    [p1, p2].forEach((f) => { if (!f.collapse) physics(f); });
-    // kick up dust the moment the body slams into the ground
     [p1, p2].forEach((f) => {
-      if (f.collapse && !f.collapse.dust && f.collapse.t >= FALL_MS * 0.82) {
-        f.collapse.dust = true; spawnDust(f);
+      if (!f.collapse) { physics(f); return; }            // survivor: gravity only, no input/combat
+      if (!f.collapse.landed) {
+        f.collapse.airT += ms;
+        if (fallStep(f) || f.collapse.airT > 1500) {       // hit the floor (or safety cap)
+          f.y = Math.min(f.y, GROUND_Y);
+          f.onGround = true; f.onPlatform = false; f.vy = 0; f.vx = 0;
+          f.collapse.landed = true; f.collapse.t = 0;
+          spawnDust(f);                                    // impact when it slams down
+        }
+      } else {
+        f.collapse.t += ms;
+        // a body that died standing slaps its back down near the end of the topple
+        if (!f.collapse.dust && f.collapse.airT === 0 && f.collapse.t >= FALL_MS * 0.82) {
+          f.collapse.dust = true; spawnDust(f);
+        }
       }
     });
+    // hold the result until every loser has landed, then play topple + ~1s beat
+    const losers = [p1, p2].filter((f) => f.collapse);
+    const allLanded = losers.every((f) => f.collapse.landed);
+    if (allLanded) groundClock += ms;
     stepParticles();
     updateHud();
-    if (deathClock >= DEATH_MOTION + RESULT_HOLD) emitResult();
+    if (allLanded && groundClock >= DEATH_MOTION + RESULT_HOLD) emitResult();
   }
 
   function emitResult() {
@@ -883,10 +909,15 @@ window.Battle = (function () {
     const hurt = f.hurt > 0 && (f.hurt % 4 < 2);
     const tint = (base) => hurt ? '#ffffff' : base;
 
-    // collapse motion (loser only): topple backward onto the back, with an
-    // initial knee-buckle, a small settle bounce, and a late fade.
-    let col = null;
-    if (f.collapse) {
+    // collapse motion (loser only). Two phases:
+    //  • falling  — died in the air: gravity pulls it down, hips/waist sag low
+    //               while the arms & legs flail upward (a limp ragdoll drop).
+    //  • col      — on the ground: topple onto the back, settle bounce, fade.
+    let col = null, falling = null;
+    if (f.collapse && !f.collapse.landed) {
+      const p = clamp(f.collapse.airT / 420, 0, 1);              // ease into the flail
+      falling = { p };
+    } else if (f.collapse) {
       const t = f.collapse.t;
       const fall = clamp(t / FALL_MS, 0, 1);
       const eased = fall * fall;                                 // accelerate into the ground
@@ -904,8 +935,15 @@ window.Battle = (function () {
     ctx.save();
     ctx.translate(f.x, f.y);
     ctx.scale(f.facing, 1);     // +x = forward
-    ctx.translate(0, col ? 0 : bob);
-    if (col) {
+    ctx.translate(0, (col || falling) ? 0 : bob);
+    if (falling) {
+      // body tips onto its back as it drops; the whole figure sinks so the
+      // waist becomes the low point (limbs kicked up by the leg/arm overrides)
+      const lean = rad(-34 - falling.p * 26);
+      const wp = -58;                            // waist/hip pivot
+      ctx.translate(0, wp); ctx.rotate(lean); ctx.translate(0, -wp);
+      ctx.translate(0, 14 + falling.p * 14);     // waist/hips sag downward
+    } else if (col) {
       ctx.globalAlpha = 1 - col.fade * 0.45;     // settle toward ~0.55, never fully gone
       const pivotY = -8;                         // topple about the ankles
       ctx.translate(0, pivotY); ctx.rotate(col.angle); ctx.translate(0, -pivotY);
@@ -940,7 +978,10 @@ window.Battle = (function () {
     // ----- legs (back first, then front) -----
     const sw = moving ? Math.sin(f.step) * 16 : 0;
     let legBack = -sw, legFront = sw;
-    if (col) {                                   // legs splay/fold as the knight goes down
+    if (falling) {                               // legs kick up toward the sky as it drops
+      legBack = lerp(-sw, 195, falling.p);
+      legFront = lerp(sw, 255, falling.p);
+    } else if (col) {                            // legs splay/fold as the knight goes down
       legBack = lerp(-sw, -30, col.fall);
       legFront = lerp(sw, 22, col.fall);
     }
@@ -976,9 +1017,10 @@ window.Battle = (function () {
     if (f.build.armor >= 7) { ctx.fillStyle = GOLD; ctx.beginPath(); ctx.arc(22, -120, 5, 0, 6.3); ctx.arc(-21, -120, 4, 0, 6.3); ctx.fill(); }
 
     // ----- head / helmet (lolls back as the knight falls) -----
-    if (col) {
+    if (col || falling) {
+      const tilt = falling ? rad(-20 - falling.p * 16) : rad(lerp(0, 22, col.fall));
       ctx.save();
-      ctx.translate(0, -128); ctx.rotate(rad(lerp(0, 22, col.fall))); ctx.translate(0, 128);
+      ctx.translate(0, -128); ctx.rotate(tilt); ctx.translate(0, 128);
       drawHelmet(f, P, tint);
       ctx.restore();
     } else {
@@ -1059,8 +1101,11 @@ window.Battle = (function () {
   function drawSwordArm(f, P, tint) {
     const swordLen = 50 + f.build.sword * 7;
     let arm = 18; // rest angle (deg), forward-down
-    if (f.collapse) {
-      // arm goes limp and the blade swings down toward the ground
+    if (f.collapse && !f.collapse.landed) {
+      // mid-air: the sword arm flings up overhead with the falling ragdoll
+      arm = lerp(18, -120, clamp(f.collapse.airT / 420, 0, 1));
+    } else if (f.collapse) {
+      // on the ground: arm goes limp and the blade swings down toward the floor
       arm = lerp(18, 122, clamp(f.collapse.t / FALL_MS, 0, 1));
     } else if (f.atk) {
       const p = clamp(f.atk.t / f.atk.dur, 0, 1);
