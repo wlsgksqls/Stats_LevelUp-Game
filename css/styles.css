@@ -312,8 +312,10 @@ html, body {
   color:#f3ecd9;
 }
 
-.enhance-footer { display:flex; align-items:center; justify-content:space-between; margin-top:4px; }
-.ready-status { font-size:20px; color:var(--gold-l); letter-spacing:1px; }
+.enhance-footer { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:4px; }
+.ready-status { font-size:20px; color:var(--gold-l); letter-spacing:1px; text-align:center; flex:1; }
+#btn-stage-prev { margin-right:auto; }
+#btn-stage-prev.invisible { visibility:hidden; }
 #btn-stage-next { margin-left:auto; }
 
 /* enhance feedback flashes */
