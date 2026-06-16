@@ -84,8 +84,8 @@ window.CONFIG = (function () {
     HP_PER_ARMOR_LV: 9,        // armor level adds max HP
     DEF_PER_ARMOR_LV: 0.035,   // damage reduction per armor level (capped)
     DEF_CAP: 0.6,
-    SPEED_BASE: 6.4,
-    SPEED_PER_STAT_LV: 0.42,   // stat level
+    SPEED_BASE: 5.4,
+    SPEED_PER_STAT_LV: 0.36,   // stat level
     REGEN_PER_STAT_LV: 0.12,   // hp/sec passive regen from stat level
 
     /* skills unlock at first milestone (5강) of their category */
