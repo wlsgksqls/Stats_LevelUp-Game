@@ -242,6 +242,7 @@ window.Enhance = (function () {
     if (outcome === 'success') {
       st.build[catKey] = lv + 1;
       flash(panel, 'flash-success');
+      if (window.SFX) SFX.play(lv + 1 >= C.MAX_LEVEL ? 'enhanceMax' : 'enhanceSuccess');
       if (C.MILESTONES.includes(lv + 1)) {
         const cat = C.CATEGORIES.find((c) => c.key === catKey);
         UI.toast(`✨ ${cat.name} ${lv + 1}강 달성! 특수 능력 점등`);
@@ -249,9 +250,11 @@ window.Enhance = (function () {
     } else if (outcome === 'down') {
       st.build[catKey] = Math.max(0, lv - 1);
       flash(panel, 'flash-down');
+      if (window.SFX) SFX.play('enhanceDown');
       UI.toast('💥 강화 실패 — 단계 하락!');
     } else {
       flash(panel, 'flash-fail');
+      if (window.SFX) SFX.play('enhanceFail');
     }
 
     refreshPanel(catKey);
