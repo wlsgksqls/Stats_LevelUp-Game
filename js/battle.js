@@ -220,7 +220,10 @@ window.Battle = (function () {
   /* ---------- actions (blocked during countdown) ---------- */
   function jump(f) {
     if (!f || f.dead || !running || paused || phase !== 'fighting') return;
-    if (f.onGround || f.coyote > 0) { f.vy = JUMP_V; f.onGround = false; f.onPlatform = false; f.coyote = 0; }
+    if (f.onGround || f.coyote > 0) {
+      f.vy = JUMP_V; f.onGround = false; f.onPlatform = false; f.coyote = 0;
+      if (f === me && window.SFX) SFX.play('jump');
+    }
   }
 
   function attack(f, kind) {
@@ -239,6 +242,7 @@ window.Battle = (function () {
     }
     a.hit = false;
     f.atk = a;
+    if (window.SFX) SFX.play(kind === 'basic' ? 'attackBasic' : 'attackStrong');
     if (netMode && f === me) Net.send({ t: 'a', kind, dmg: a.dmg, reach: a.reach, hh: a.hh, kb: a.kb });
   }
 
@@ -248,6 +252,7 @@ window.Battle = (function () {
     if (f.skillCd[idx] > 0) return;
     const pw = f.stats.skillPower[idx] || 1;                 // 7·9·10강 위력 강화
     f.skillCd[idx] = C.SKILL_COOLDOWNS[idx] * (f.stats.skillCdMult[idx] || 1); // 9·10강 쿨타임 단축
+    if (window.SFX) SFX.play(['skillSword', 'skillArmor', 'skillStat'][idx]);
     if (idx === 0) {
       const a = { kind: 'skill', t: 0, dur: 40, as: 14, ae: 30, reach: 175, hh: 150, dmg: f.stats.strong * 1.5 * pw, kb: 24, hit: false };
       f.atk = a; f.vx += f.facing * 16;
@@ -280,11 +285,12 @@ window.Battle = (function () {
     } else if (msg.t === 'a') {
       opp.atk = { kind: msg.kind, t: 0, dur: msg.kind === 'strong' ? 34 : msg.kind === 'skill' ? 40 : 18,
                   as: 99, ae: 99, reach: msg.reach, hh: msg.hh, dmg: 0, kb: 0, hit: true };
+      if (window.SFX) SFX.play(msg.kind === 'skill' ? 'skillSword' : msg.kind === 'strong' ? 'attackStrong' : 'attackBasic');
     } else if (msg.t === 'h') {
       applyDamage(me, msg.dmg, msg.kx, msg.kind);
     } else if (msg.t === 'sk') {
-      if (msg.idx === 1) { opp.shieldT = msg.dur || 2200; spawnRing(opp, '#9fc0ef'); }
-      if (msg.idx === 2) { opp.hasteT = msg.dur || 3500; spawnRing(opp, '#b9a8ff'); }
+      if (msg.idx === 1) { opp.shieldT = msg.dur || 2200; spawnRing(opp, '#9fc0ef'); if (window.SFX) SFX.play('skillArmor'); }
+      if (msg.idx === 2) { opp.hasteT = msg.dur || 3500; spawnRing(opp, '#b9a8ff'); if (window.SFX) SFX.play('skillStat'); }
     } else if (msg.t === 'dead') {
       if (!ended) finish(me.dead ? 'draw' : 'win');
     }
@@ -348,6 +354,7 @@ window.Battle = (function () {
 
     // gravity + collision (always integrate; support is re-evaluated each step)
     const prevFeet = f.y;
+    const wasGround = f.onGround;
     f.vy = Math.min(MAXFALL, f.vy + GRAVITY);
     f.y += f.vy;
     f.onGround = false; f.onPlatform = false;
@@ -362,6 +369,17 @@ window.Battle = (function () {
     }
     // solid ground
     if (f.y >= GROUND_Y) { f.y = GROUND_Y; f.vy = 0; f.onGround = true; f.onPlatform = false; }
+
+    // local-player movement audio: touchdown (platform 'tok' vs ground thud) + footsteps
+    if (f === me && window.SFX) {
+      if (!wasGround && f.onGround) SFX.play(f.onPlatform ? 'platformStep' : 'land');
+      if (f.onGround && Math.abs(f.vx) > 1.2 && phase === 'fighting') {
+        f.stepSfxT = (f.stepSfxT || 0) + STEP;
+        if (f.stepSfxT >= 280) { f.stepSfxT = 0; SFX.play('footstep'); }
+      } else {
+        f.stepSfxT = 999;   // next step fires promptly when movement resumes
+      }
+    }
 
     // coyote time — still allow a jump shortly after leaving an edge
     if (f.onGround) f.coyote = COYOTE; else if (f.coyote > 0) f.coyote--;
@@ -445,6 +463,7 @@ window.Battle = (function () {
   /* ---------- particles ---------- */
   const SPARKS = ['#ffe6a8', '#ffb867', '#ff7a47', '#ffffff'];
   function spawnHit(x, y, kind) {
+    if (window.SFX) SFX.play('hit');
     const n = kind === 'strong' || kind === 'skill' ? 22 : 12;
     for (let i = 0; i < n; i++) {
       const ang = Math.random() * Math.PI * 2, sp = 2 + Math.random() * (kind === 'basic' ? 7 : 12);
@@ -618,12 +637,14 @@ window.Battle = (function () {
           f.onGround = true; f.onPlatform = false; f.vy = 0; f.vx = 0;
           f.collapse.landed = true; f.collapse.t = 0;
           spawnDust(f);                                    // impact when it slams down
+          if (window.SFX) SFX.play('bodyFall');
         }
       } else {
         f.collapse.t += ms;
         // a body that died standing slaps its back down near the end of the topple
         if (!f.collapse.dust && f.collapse.airT === 0 && f.collapse.t >= FALL_MS * 0.82) {
           f.collapse.dust = true; spawnDust(f);
+          if (window.SFX) SFX.play('bodyFall');
         }
       }
     });
@@ -651,6 +672,7 @@ window.Battle = (function () {
     if (label !== lastCount) {
       lastCount = label;
       num.textContent = label;
+      if (window.SFX) SFX.play(countdownT <= 0 ? 'countdownGo' : 'countdownBeep');
       el.classList.toggle('cd-go', countdownT <= 0);
       num.classList.remove('cd-pop'); void num.offsetWidth; num.classList.add('cd-pop');
     }

@@ -202,6 +202,7 @@
   function showResult(result) {
     myRematch = false; oppRematch = false; // reset per match (oppQuit persists if set during battle)
     UI.show('result');
+    if (window.SFX) SFX.play(result === 'win' ? 'win' : 'lose');
     const titleMap = { win: ['승리!', 'result-win'], lose: ['패배...', 'result-lose'], draw: ['무승부', 'result-win'] };
     const [title, cls] = titleMap[result] || titleMap.lose;
     const sub = result === 'win' ? '상대를 쓰러뜨렸습니다.' : result === 'lose' ? '다음엔 더 강하게 단련하세요.' : '동시에 쓰러졌습니다.';

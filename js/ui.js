@@ -94,6 +94,14 @@ window.UI = (function () {
     // re-fit after the mobile browser settles its viewport (URL bar, etc.)
     setTimeout(fitStage, 200);
     setTimeout(fitStage, 600);
+
+    // menu button click sound (battle has its own combat audio, so skip there)
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest && e.target.closest('.btn');
+      if (!btn || btn.disabled) return;
+      if (current === 'battle') return;
+      if (window.SFX) SFX.play(/back|나가기|취소/.test(btn.textContent || '') ? 'uiBack' : 'uiClick');
+    });
   }
 
   return { $, $$, init, show, currentScreen, loading, popup, closePopup, popupIsOpen, toast, fitStage };
