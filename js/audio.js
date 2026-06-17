@@ -17,7 +17,7 @@ window.SFX = (function () {
     try {
       ctx = new AC();
       master = ctx.createGain();
-      master.gain.value = 0.5;
+      master.gain.value = 0.9;
       const comp = ctx.createDynamicsCompressor();   // tame layered peaks
       master.connect(comp); comp.connect(ctx.destination);
       ready = true;
